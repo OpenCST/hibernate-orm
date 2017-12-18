@@ -293,12 +293,6 @@ public abstract class Collection implements Fetchable, Value, Filterable {
 		assert getKey() != null : "Collection key not bound : " + getRole();
 		assert getElement() != null : "Collection element not bound : " + getRole();
 
-		if ( getKey().isCascadeDeleteEnabled() && ( !isInverse() || !isOneToMany() ) ) {
-			throw new MappingException(
-					"only inverse one-to-many associations may use on-delete=\"cascade\": "
-							+ getRole()
-			);
-		}
 		if ( !getKey().isValid( mapping ) ) {
 			throw new MappingException(
 					"collection foreign key mapping has wrong number of columns: "
@@ -319,11 +313,17 @@ public abstract class Collection implements Fetchable, Value, Filterable {
 		checkColumnDuplication();
 	}
 
-	private void checkColumnDuplication(java.util.Set distinctColumns, Iterator columns)
+	private void checkColumnDuplication(java.util.Set distinctColumns, Value value)
 			throws MappingException {
-		while ( columns.hasNext() ) {
-			Selectable s = (Selectable) columns.next();
-			if ( !s.isFormula() ) {
+		final boolean[] insertability = value.getColumnInsertability();
+		final boolean[] updatability = value.getColumnUpdateability();
+		final Iterator<Selectable> iterator = value.getColumnIterator();
+		int i = 0;
+		while ( iterator.hasNext() ) {
+			Selectable s = iterator.next();
+			// exclude formulas and coluns that are not insertable or updatable
+			// since these values can be be repeated (HHH-5393)
+			if ( !s.isFormula() && ( insertability[i] || updatability[i] ) ) {
 				Column col = (Column) s;
 				if ( !distinctColumns.add( col.getName() ) ) {
 					throw new MappingException(
@@ -334,28 +334,27 @@ public abstract class Collection implements Fetchable, Value, Filterable {
 					);
 				}
 			}
+			i++;
 		}
 	}
 
 	private void checkColumnDuplication() throws MappingException {
 		HashSet cols = new HashSet();
-		checkColumnDuplication( cols, getKey().getColumnIterator() );
+		checkColumnDuplication( cols, getKey() );
 		if ( isIndexed() ) {
 			checkColumnDuplication(
-					cols, ( (IndexedCollection) this )
-							.getIndex()
-							.getColumnIterator()
+					cols,
+					( (IndexedCollection) this ).getIndex()
 			);
 		}
 		if ( isIdentified() ) {
 			checkColumnDuplication(
-					cols, ( (IdentifierCollection) this )
-							.getIdentifier()
-							.getColumnIterator()
+					cols,
+					( (IdentifierCollection) this ).getIdentifier()
 			);
 		}
 		if ( !isOneToMany() ) {
-			checkColumnDuplication( cols, getElement().getColumnIterator() );
+			checkColumnDuplication( cols, getElement() );
 		}
 	}
 

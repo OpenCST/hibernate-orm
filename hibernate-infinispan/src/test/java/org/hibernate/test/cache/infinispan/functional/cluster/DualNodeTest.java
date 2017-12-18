@@ -32,8 +32,6 @@ import org.junit.ClassRule;
  */
 public abstract class DualNodeTest extends AbstractFunctionalTest {
 
-	private static final InfinispanMessageLogger log = InfinispanMessageLogger.Provider.getLog( DualNodeTest.class );
-
 	@ClassRule
 	public static final InfinispanTestingSetup infinispanTestIdentifier = new InfinispanTestingSetup();
 
@@ -113,15 +111,6 @@ public abstract class DualNodeTest extends AbstractFunctionalTest {
 
 	protected Class<? extends TransactionCoordinatorBuilder> getTransactionCoordinatorBuilder() {
 		return JtaTransactionCoordinatorBuilderImpl.class;
-	}
-
-	protected void sleep(long ms) {
-		try {
-			Thread.sleep( ms );
-		}
-		catch (InterruptedException e) {
-			log.warn( "Interrupted during sleep", e );
-		}
 	}
 
 	protected void configureSecondNode(StandardServiceRegistryBuilder ssrb) {

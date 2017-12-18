@@ -162,7 +162,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 		);
 		entitySnapshotsByKey = new HashMap<>( INIT_COLL_SIZE );
 
-		entityEntryContext = new EntityEntryContext();
+		entityEntryContext = new EntityEntryContext( this );
 //		entityEntries = IdentityMap.instantiateSequenced( INIT_COLL_SIZE );
 		collectionEntries = IdentityMap.instantiateSequenced( INIT_COLL_SIZE );
 		parentsByChild = new IdentityHashMap<>( INIT_COLL_SIZE );
@@ -1073,7 +1073,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 		if ( removeOrphanBeforeUpdatesCounter >= getCascadeLevel() ) {
 			throw new IllegalStateException(
 					String.format(
-							"Cascade level [%d] is out of sync with removeOrphanBeforeUpdatesCounter [%d] beforeQuery incrementing removeOrphanBeforeUpdatesCounter",
+							"Cascade level [%d] is out of sync with removeOrphanBeforeUpdatesCounter [%d] before incrementing removeOrphanBeforeUpdatesCounter",
 							getCascadeLevel(),
 							removeOrphanBeforeUpdatesCounter
 					)
@@ -1089,7 +1089,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 		if ( removeOrphanBeforeUpdatesCounter > getCascadeLevel() ) {
 			throw new IllegalStateException(
 					String.format(
-							"Cascade level [%d] is out of sync with removeOrphanBeforeUpdatesCounter [%d] beforeQuery decrementing removeOrphanBeforeUpdatesCounter",
+							"Cascade level [%d] is out of sync with removeOrphanBeforeUpdatesCounter [%d] before decrementing removeOrphanBeforeUpdatesCounter",
 							getCascadeLevel(),
 							removeOrphanBeforeUpdatesCounter
 					)
@@ -1099,7 +1099,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 	}
 
 	/**
-	 * Call this beforeQuery beginning a two-phase load
+	 * Call this before beginning a two-phase load
 	 */
 	@Override
 	public void beforeLoad() {
@@ -1107,7 +1107,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 	}
 
 	/**
-	 * Call this afterQuery finishing a two-phase load
+	 * Call this after finishing a two-phase load
 	 */
 	@Override
 	public void afterLoad() {
@@ -1437,7 +1437,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 	public void serialize(ObjectOutputStream oos) throws IOException {
 		final boolean tracing = LOG.isTraceEnabled();
 		if ( tracing ) {
-			LOG.trace( "Serializing persisatence-context" );
+			LOG.trace( "Serializing persistence-context" );
 		}
 
 		oos.writeBoolean( defaultReadOnly );
@@ -1533,7 +1533,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 			SessionImplementor session) throws IOException, ClassNotFoundException {
 		final boolean tracing = LOG.isTraceEnabled();
 		if ( tracing ) {
-			LOG.trace( "Serializing persistent-context" );
+			LOG.trace( "Deserializing persistence-context" );
 		}
 		final StatefulPersistenceContext rtn = new StatefulPersistenceContext( session );
 		SessionFactoryImplementor sfi = session.getFactory();
@@ -1670,7 +1670,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 	@Override
 	public void registerInsertedKey(EntityPersister persister, Serializable id) {
 		// we only are worried about registering these if the persister defines caching
-		if ( persister.hasCache() ) {
+		if ( persister.canWriteToCache() ) {
 			if ( insertedKeysMap == null ) {
 				insertedKeysMap = new HashMap<>();
 			}
@@ -1687,7 +1687,7 @@ public class StatefulPersistenceContext implements PersistenceContext {
 	@Override
 	public boolean wasInsertedDuringTransaction(EntityPersister persister, Serializable id) {
 		// again, we only really care if the entity is cached
-		if ( persister.hasCache() ) {
+		if ( persister.canWriteToCache() ) {
 			if ( insertedKeysMap != null ) {
 				final List<Serializable> insertedEntityIds = insertedKeysMap.get( persister.getRootEntityName() );
 				if ( insertedEntityIds != null ) {

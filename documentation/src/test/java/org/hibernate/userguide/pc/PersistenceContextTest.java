@@ -10,7 +10,9 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import javax.persistence.CascadeType;
 import javax.persistence.Entity;
+import javax.persistence.EntityNotFoundException;
 import javax.persistence.Id;
 import javax.persistence.ManyToOne;
 import javax.persistence.OneToMany;
@@ -28,7 +30,9 @@ import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import org.jboss.logging.Logger;
+
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -187,6 +191,31 @@ public class PersistenceContextTest extends BaseEntityManagerFunctionalTestCase 
 			//end::pc-refresh-jpa-example[]
 		} );
 
+		try {
+			doInJPA( this::entityManagerFactory, entityManager -> {
+				Long personId = _personId;
+
+				//tag::pc-refresh-child-entity-jpa-example[]
+				try {
+					Person person = entityManager.find( Person.class, personId );
+
+					Book book = new Book();
+					book.setId( 100L );
+					book.setTitle( "Hibernate User Guide" );
+					book.setAuthor( person );
+					person.getBooks().add( book );
+
+					entityManager.refresh( person );
+				}
+				catch ( EntityNotFoundException expected ) {
+					log.info( "Beware when cascading the refresh associations to transient entities!" );
+				}
+				//end::pc-refresh-child-entity-jpa-example[]
+			} );
+		}
+		catch ( Exception expected ) {
+		}
+
 		doInJPA( this::entityManagerFactory, entityManager -> {
 			Session session = entityManager.unwrap( Session.class );
 			Long personId = _personId;
@@ -194,7 +223,7 @@ public class PersistenceContextTest extends BaseEntityManagerFunctionalTestCase 
 			//tag::pc-managed-state-native-example[]
 			Person person = session.byId( Person.class ).load( personId );
 			person.setName("John Doe");
-			entityManager.flush();
+			session.flush();
 			//end::pc-managed-state-native-example[]
 		} );
 
@@ -207,7 +236,7 @@ public class PersistenceContextTest extends BaseEntityManagerFunctionalTestCase 
 
 			session.doWork( connection -> {
 				try(Statement statement = connection.createStatement()) {
-					statement.executeUpdate( "UPDATE person SET name = UPPER(name)" );
+					statement.executeUpdate( "UPDATE Person SET name = UPPER(name)" );
 				}
 			} );
 
@@ -350,7 +379,7 @@ public class PersistenceContextTest extends BaseEntityManagerFunctionalTestCase 
 
 		private String name;
 
-		@OneToMany(mappedBy = "author")
+		@OneToMany(mappedBy = "author", cascade = CascadeType.ALL)
 		private List<Book> books = new ArrayList<>(  );
 
 		public Long getId() {

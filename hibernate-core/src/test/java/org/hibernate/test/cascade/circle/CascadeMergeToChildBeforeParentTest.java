@@ -75,7 +75,7 @@ public class CascadeMergeToChildBeforeParentTest extends BaseCoreFunctionalTestC
 		s = openSession();
 		s.beginTransaction();
 
-		route = (Route) s.get( Route.class, new Long( 1 ) );
+		route = (Route) s.get( Route.class, route.getRouteID() );
 
 		route.setTransientField( new String( "sfnaouisrbn" ) );
 
@@ -111,7 +111,7 @@ public class CascadeMergeToChildBeforeParentTest extends BaseCoreFunctionalTestC
 	@Test
 	public void testMergeTransientChildBeforeTransientParent() {
 		// This test fails because the merge algorithm tries to save a
-		// transient child (transport) beforeQuery cascade-merge gets its
+		// transient child (transport) before cascade-merge gets its
 		// transient parent (vehicle); merge does not cascade from the
 		// child to the parent.
 		Session s = openSession();
@@ -127,7 +127,7 @@ public class CascadeMergeToChildBeforeParentTest extends BaseCoreFunctionalTestC
 		s = openSession();
 		s.beginTransaction();
 
-		route = (Route) s.get( Route.class, new Long( 1 ) );
+		route = (Route) s.get( Route.class, route.getRouteID() );
 
 		route.setTransientField( new String( "sfnaouisrbn" ) );
 
@@ -194,7 +194,7 @@ public class CascadeMergeToChildBeforeParentTest extends BaseCoreFunctionalTestC
 		s = openSession();
 		s.beginTransaction();
 
-		route = (Route) s.get( Route.class, new Long( 1 ) );
+		route = (Route) s.get( Route.class, route.getRouteID() );
 
 		route.setTransientField( new String( "sfnaouisrbn" ) );
 

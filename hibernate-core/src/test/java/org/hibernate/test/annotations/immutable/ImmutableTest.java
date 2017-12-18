@@ -6,16 +6,18 @@
  */
 package org.hibernate.test.annotations.immutable;
 
-import javax.persistence.PersistenceException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import javax.persistence.PersistenceException;
 
 import org.hibernate.AnnotationException;
-import org.hibernate.HibernateException;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 import org.hibernate.boot.MetadataSources;
+import org.hibernate.boot.registry.BootstrapServiceRegistry;
+import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder;
+import org.hibernate.service.ServiceRegistry;
 
 import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
 import org.junit.Test;
@@ -34,7 +36,6 @@ import static org.junit.Assert.fail;
  */
 @SuppressWarnings("unchecked")
 public class ImmutableTest extends BaseCoreFunctionalTestCase {
-	private static final Logger log = Logger.getLogger( ImmutableTest.class );
 
 	@Test
 	public void testImmutableEntity() throws Exception {
@@ -222,11 +223,18 @@ public class ImmutableTest extends BaseCoreFunctionalTestCase {
 	
 	@Test
 	public void testMisplacedImmutableAnnotation() {
+		MetadataSources metadataSources = new MetadataSources().addAnnotatedClass( Foobar.class );
 		try {
-			new MetadataSources().addAnnotatedClass( Foobar.class ).buildMetadata();
+			metadataSources.buildMetadata();
 			fail( "Expecting exception due to misplaced @Immutable annotation");
 		}
 		catch (AnnotationException ignore) {
+		}
+		finally {
+			ServiceRegistry metaServiceRegistry = metadataSources.getServiceRegistry();
+			if(metaServiceRegistry instanceof BootstrapServiceRegistry ) {
+				BootstrapServiceRegistryBuilder.destroy( metaServiceRegistry );
+			}
 		}
 	}
 

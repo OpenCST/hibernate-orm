@@ -19,6 +19,7 @@ import org.hibernate.test.cache.infinispan.AbstractRegionAccessStrategyTest;
 import org.hibernate.test.cache.infinispan.NodeEnvironment;
 import org.hibernate.test.cache.infinispan.util.TestSynchronization;
 import org.hibernate.test.cache.infinispan.util.TestingKeyFactory;
+import org.junit.Ignore;
 import org.junit.Test;
 import junit.framework.AssertionFailedError;
 
@@ -61,7 +62,7 @@ public class EntityRegionAccessStrategyTest extends
 		if (accessType == AccessType.READ_ONLY) {
 			putFromLoadTestReadOnly(false);
 		} else {
-			putFromLoadTest(false);
+			putFromLoadTest(false, false);
 		}
 	}
 
@@ -70,100 +71,21 @@ public class EntityRegionAccessStrategyTest extends
 		if (accessType == AccessType.READ_ONLY) {
 			putFromLoadTestReadOnly(true);
 		} else {
-			putFromLoadTest(true);
-		}
-	}
-
-	/**
-	 * Simulate 2 nodes, both start, tx do a get, experience a cache miss, then
-	 * 'read from db.' First does a putFromLoad, then an update. Second tries to
-	 * do a putFromLoad with stale data (i.e. it took longer to read from the db).
-	 * Both commit their tx. Then both start a new tx and get. First should see
-	 * the updated data; second should either see the updated data
-	 * (isInvalidation() == false) or null (isInvalidation() == true).
-	 *
-	 * @param useMinimalAPI
-	 * @throws Exception
-	 */
-	protected void putFromLoadTest(final boolean useMinimalAPI) throws Exception {
-
-		final Object KEY = generateNextKey();
-
-		final CountDownLatch writeLatch1 = new CountDownLatch(1);
-		final CountDownLatch writeLatch2 = new CountDownLatch(1);
-		final CountDownLatch completionLatch = new CountDownLatch(2);
-
-		Thread node1 = new Thread() {
-			@Override
-			public void run() {
-				try {
-					SharedSessionContractImplementor session = mockedSession();
-					withTx(localEnvironment, session, () -> {
-						assertNull(localAccessStrategy.get(session, KEY, session.getTimestamp()));
-
-						writeLatch1.await();
-
-						if (useMinimalAPI) {
-							localAccessStrategy.putFromLoad(session, KEY, VALUE1, session.getTimestamp(), 1, true);
-						} else {
-							localAccessStrategy.putFromLoad(session, KEY, VALUE1, session.getTimestamp(), 1);
-						}
-
-						doUpdate(localAccessStrategy, session, KEY, VALUE2, 2);
-						return null;
-					});
-				} catch (Exception e) {
-					log.error("node1 caught exception", e);
-					node1Exception = e;
-				} catch (AssertionFailedError e) {
-					node1Failure = e;
-				} finally {
-					// Let node2 write
-					writeLatch2.countDown();
-					completionLatch.countDown();
-				}
-			}
-		};
-
-		Thread node2 = new PutFromLoadNode2(KEY, writeLatch1, writeLatch2, useMinimalAPI, completionLatch);
-
-		node1.setDaemon(true);
-		node2.setDaemon(true);
-
-		node1.start();
-		node2.start();
-
-		assertTrue("Threads completed", completionLatch.await(2, TimeUnit.SECONDS));
-
-		assertThreadsRanCleanly();
-
-		SharedSessionContractImplementor s1 = mockedSession();
-		assertEquals( VALUE2, localAccessStrategy.get(s1, KEY, s1.getTimestamp()));
-		SharedSessionContractImplementor s2 = mockedSession();
-		Object remoteValue = remoteAccessStrategy.get(s2, KEY, s2.getTimestamp());
-		if (isUsingInvalidation()) {
-			// invalidation command invalidates pending put
-			assertNull(remoteValue);
-		}
-		else {
-			// The node1 update is replicated, preventing the node2 PFER
-			assertEquals( VALUE2, remoteValue);
+			putFromLoadTest(true, false);
 		}
 	}
 
 	@Test
 	public void testInsert() throws Exception {
-
 		final Object KEY = generateNextKey();
 
 		final CountDownLatch readLatch = new CountDownLatch(1);
 		final CountDownLatch commitLatch = new CountDownLatch(1);
 		final CountDownLatch completionLatch = new CountDownLatch(2);
 
-		Thread inserter = new Thread() {
+		CountDownLatch asyncInsertLatch = expectAfterUpdate();
 
-			@Override
-			public void run() {
+		Thread inserter = new Thread(() -> {
 				try {
 					SharedSessionContractImplementor session = mockedSession();
 					withTx(localEnvironment, session, () -> {
@@ -184,12 +106,9 @@ public class EntityRegionAccessStrategyTest extends
 
 					completionLatch.countDown();
 				}
-			}
-		};
+			}, "testInsert-inserter");
 
-		Thread reader = new Thread() {
-			@Override
-			public void run() {
+		Thread reader = new Thread(() -> {
 				try {
 					SharedSessionContractImplementor session = mockedSession();
 					withTx(localEnvironment, session, () -> {
@@ -207,20 +126,21 @@ public class EntityRegionAccessStrategyTest extends
 					commitLatch.countDown();
 					completionLatch.countDown();
 				}
-			}
-		};
+			}, "testInsert-reader");
 
 		inserter.setDaemon(true);
 		reader.setDaemon(true);
 		inserter.start();
 		reader.start();
 
-		assertTrue("Threads completed", completionLatch.await(1000, TimeUnit.SECONDS));
+		assertTrue("Threads completed", completionLatch.await(10, TimeUnit.SECONDS));
 
 		assertThreadsRanCleanly();
 
 		SharedSessionContractImplementor s1 = mockedSession();
 		assertEquals("Correct node1 value", VALUE1, localAccessStrategy.get(s1, KEY, s1.getTimestamp()));
+
+		assertTrue(asyncInsertLatch.await(10, TimeUnit.SECONDS));
 		Object expected = isUsingInvalidation() ? null : VALUE1;
 		SharedSessionContractImplementor s2 = mockedSession();
 		assertEquals("Correct node2 value", expected, remoteAccessStrategy.get(s2, KEY, s2.getTimestamp()));
@@ -235,7 +155,7 @@ public class EntityRegionAccessStrategyTest extends
 	protected void putFromLoadTestReadOnly(boolean minimal) throws Exception {
 		final Object KEY = TestingKeyFactory.generateEntityCacheKey( KEY_BASE + testCount++ );
 
-		Object expected = isUsingInvalidation() ? null : VALUE1;
+		CountDownLatch remotePutFromLoadLatch = expectPutFromLoad();
 
 		SharedSessionContractImplementor session = mockedSession();
 		withTx(localEnvironment, session, () -> {
@@ -250,6 +170,15 @@ public class EntityRegionAccessStrategyTest extends
 		SharedSessionContractImplementor s2 = mockedSession();
 		assertEquals(VALUE1, localAccessStrategy.get(s2, KEY, s2.getTimestamp()));
 		SharedSessionContractImplementor s3 = mockedSession();
+		Object expected;
+		if (isUsingInvalidation()) {
+			expected = null;
+		} else {
+			if (accessType != AccessType.NONSTRICT_READ_WRITE) {
+				assertTrue(remotePutFromLoadLatch.await(2, TimeUnit.SECONDS));
+			}
+			expected = VALUE1;
+		}
 		assertEquals(expected, remoteAccessStrategy.get(s3, KEY, s3.getTimestamp()));
 	}
 
@@ -267,16 +196,14 @@ public class EntityRegionAccessStrategyTest extends
 		SharedSessionContractImplementor s2 = mockedSession();
 		remoteAccessStrategy.putFromLoad(s2, KEY, VALUE1, s2.getTimestamp(), 1);
 
-		// Let the async put propagate
-		sleep(250);
+		// both nodes are updated, we don't have to wait for any async replication of putFromLoad
+		CountDownLatch asyncUpdateLatch = expectAfterUpdate();
 
 		final CountDownLatch readLatch = new CountDownLatch(1);
 		final CountDownLatch commitLatch = new CountDownLatch(1);
 		final CountDownLatch completionLatch = new CountDownLatch(2);
 
-		Thread updater = new Thread("testUpdate-updater") {
-			@Override
-			public void run() {
+		Thread updater = new Thread(() -> {
 				try {
 					SharedSessionContractImplementor session = mockedSession();
 					withTx(localEnvironment, session, () -> {
@@ -302,12 +229,9 @@ public class EntityRegionAccessStrategyTest extends
 					log.debug("Completion latch countdown");
 					completionLatch.countDown();
 				}
-			}
-		};
+			}, "testUpdate-updater");
 
-		Thread reader = new Thread("testUpdate-reader") {
-			@Override
-			public void run() {
+		Thread reader = new Thread(() -> {
 				try {
 					SharedSessionContractImplementor session = mockedSession();
 					withTx(localEnvironment, session, () -> {
@@ -316,7 +240,7 @@ public class EntityRegionAccessStrategyTest extends
 						log.debug("Read latch acquired, verify local access strategy");
 
 						// This won't block w/ mvc and will read the old value (if transactional as the transaction
-						// is not being committed yet, or if non-strict as we do the actual update only afterQuery transaction)
+						// is not being committed yet, or if non-strict as we do the actual update only after transaction)
 						// or null if non-transactional
 						Object expected = isTransactional() || accessType == AccessType.NONSTRICT_READ_WRITE ? VALUE1 : null;
 						assertEquals("Correct value", expected, localAccessStrategy.get(session, KEY, session.getTimestamp()));
@@ -332,26 +256,26 @@ public class EntityRegionAccessStrategyTest extends
 					log.debug("Completion latch countdown");
 					completionLatch.countDown();
 				}
-			}
-		};
+			}, "testUpdate-reader");
 
 		updater.setDaemon(true);
 		reader.setDaemon(true);
 		updater.start();
 		reader.start();
 
-		// Should complete promptly
 		assertTrue(completionLatch.await(2, TimeUnit.SECONDS));
 
 		assertThreadsRanCleanly();
 
 		SharedSessionContractImplementor s3 = mockedSession();
 		assertEquals("Correct node1 value", VALUE2, localAccessStrategy.get(s3, KEY, s3.getTimestamp()));
+		assertTrue(asyncUpdateLatch.await(10, TimeUnit.SECONDS));
 		Object expected = isUsingInvalidation() ? null : VALUE2;
 		SharedSessionContractImplementor s4 = mockedSession();
 		assertEquals("Correct node2 value", expected, remoteAccessStrategy.get(s4, KEY, s4.getTimestamp()));
 	}
 
+	@Override
 	protected void doUpdate(EntityRegionAccessStrategy strategy, SharedSessionContractImplementor session, Object key, Object value, Object version) throws javax.transaction.RollbackException, javax.transaction.SystemException {
 		SoftLock softLock = strategy.lockItem(session, key, null);
 		strategy.update(session, key, value, null, null);
@@ -359,6 +283,14 @@ public class EntityRegionAccessStrategyTest extends
 				new TestSynchronization.AfterUpdate(strategy, session, key, value, version, softLock));
 	}
 
+	/**
+	 * This test fails in CI too often because it depends on very short timeout. The behaviour is basically
+	 * non-testable as we want to make sure that the "Putter" is always progressing; however, it is sometimes
+	 * progressing in different thread (on different node), and sometimes even in system, sending a message
+	 * over network. Therefore even checking that some OOB/remote thread is in RUNNABLE/RUNNING state is prone
+	 * to spurious failure (and we can't grab the state of all threads atomically).
+    */
+	@Ignore
 	@Test
 	public void testContestedPutFromLoad() throws Exception {
 		if (accessType == AccessType.READ_ONLY) {
@@ -423,7 +355,7 @@ public class EntityRegionAccessStrategyTest extends
 		blocker.start();
 		assertTrue("Active tx has done an update", pferLatch.await(1, TimeUnit.SECONDS));
 		putter.start();
-		assertTrue("putFromLoadreturns promtly", pferCompletionLatch.await(10, TimeUnit.MILLISECONDS));
+		assertTrue("putFromLoad returns promptly", pferCompletionLatch.await(10, TimeUnit.MILLISECONDS));
 
 		commitLatch.countDown();
 

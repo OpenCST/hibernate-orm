@@ -11,6 +11,7 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -27,6 +28,9 @@ import org.hibernate.stat.SecondLevelCacheStatistics;
 
 import org.hibernate.test.cache.infinispan.functional.entities.Contact;
 import org.hibernate.test.cache.infinispan.functional.entities.Customer;
+import org.hibernate.test.cache.infinispan.util.TestInfinispanRegionFactory;
+import org.hibernate.test.cache.infinispan.util.TestTimeService;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -48,6 +52,7 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 	private static final int THINK_TIME_MILLIS = 10;
 	private static final long LAUNCH_INTERVAL_MILLIS = 10;
 	private static final Random random = new Random();
+	private static final TestTimeService TIME_SERVICE = new TestTimeService();
 
 	/**
 	 * kill switch used to stop all users when one fails
@@ -71,6 +76,12 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 	}
 
 	@Override
+	protected void addSettings(Map settings) {
+		super.addSettings(settings);
+		settings.put(TestInfinispanRegionFactory.TIME_SERVICE, TIME_SERVICE);
+	}
+
+	@Override
 	protected void cleanupTest() throws Exception {
 		try {
 			super.cleanupTest();
@@ -89,15 +100,15 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 	public void testSingleUser() throws Exception {
 		// setup
 		sessionFactory().getStatistics().clear();
-		// wait a while to make sure that timestamp comparison works afterQuery invalidateRegion
-		Thread.sleep(1);
+		// wait a while to make sure that timestamp comparison works after invalidateRegion
+		TIME_SERVICE.advance(1);
 
 		Customer customer = createCustomer( 0 );
 		final Integer customerId = customer.getId();
 		getCustomerIDs().add( customerId );
 
-		// wait a while to make sure that timestamp comparison works afterQuery collection remove (during insert)
-		Thread.sleep(1);
+		// wait a while to make sure that timestamp comparison works after collection remove (during insert)
+		TIME_SERVICE.advance(1);
 
 		assertNull( "contact exists despite not being added", getFirstContact( customerId ) );
 
@@ -120,20 +131,22 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 		final Contact contact = addContact( customerId );
 		assertNotNull( "contact returned by addContact is null", contact );
 		assertEquals(
-				"Customer.contacts cache was not invalidated afterQuery addContact", 0,
+				"Customer.contacts cache was not invalidated after addContact", 0,
 				contactsCollectionSlcs.getElementCountInMemory()
 		);
 
-		assertNotNull( "Contact missing afterQuery successful add call", getFirstContact( customerId ) );
+		assertNotNull( "Contact missing after successful add call", getFirstContact( customerId ) );
 
 		// read everyone's contacts
 		readEveryonesFirstContact();
 
 		removeContact( customerId );
-		assertNull( "contact still exists afterQuery successful remove call", getFirstContact( customerId ) );
+		assertNull( "contact still exists after successful remove call", getFirstContact( customerId ) );
 
 	}
 
+	// Ignoring the test as it's more of a stress-test: this should be enabled manually
+	@Ignore
 	@Test
 	public void testManyUsers() throws Throwable {
 		try {
@@ -153,7 +166,6 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 				futures.add( future );
 				Thread.sleep( LAUNCH_INTERVAL_MILLIS ); // rampup
 			}
-//         barrier.await(); // wait for all threads to be ready
 			barrier.await( 2, TimeUnit.MINUTES ); // wait for all threads to finish
 			log.info( "All threads finished, let's shutdown the executor and check whether any exceptions were reported" );
 			for ( Future<Void> future : futures ) {
@@ -309,7 +321,7 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 		);
 
 		for ( UserRunner r : runners ) {
-			sb.append( r.toString() + System.getProperty( "line.separator" ) );
+			sb.append( r.toString() ).append( System.lineSeparator() );
 		}
 		return sb.toString();
 	}
@@ -367,7 +379,7 @@ public class ConcurrentWriteTest extends SingleNodeTest {
 					thinkRandomTime();
 					++completedIterations;
 					if ( trace ) {
-						log.tracef( "Iteration completed {0}", completedIterations );
+						log.tracef( "Iteration completed %d", completedIterations );
 					}
 				}
 			}

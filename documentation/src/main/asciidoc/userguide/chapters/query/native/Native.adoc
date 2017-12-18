@@ -12,7 +12,7 @@ Hibernate also allows you to specify handwritten SQL (including stored procedure
 [[sql-jpa-query]]
 === Creating a native query using JPA
 
-Execution of native SQL queries is controlled via the `SQLQuery` interface, which is obtained by calling `Session.createSQLQuery()`.
+Execution of native SQL queries is controlled via the `NativeQuery` interface, which is obtained by calling `Session.createNativeQuery()`.
 The following sections describe how to use this API for querying.
 
 [[sql-scalar-query]]
@@ -136,7 +136,8 @@ include::{sourcedir}/SQLTest.java[tags=sql-hibernate-entity-query-explicit-resul
 [[sql-entity-associations-query]]
 === Handling associations and collections
 
-If the entity is mapped with a `many-to-one` or a child-side `one-to-one` to another entity, it is required to also return this when performing the native query,
+If the entity is mapped with a `many-to-one` or a child-side `one-to-one` to another entity,
+it is required to also return this when performing the native query,
 otherwise a database specific _column not found_ error will occur.
 
 [[sql-jpa-entity-associations-query-many-to-one-example]]
@@ -157,28 +158,10 @@ include::{sourcedir}/SQLTest.java[tags=sql-hibernate-entity-associations-query-m
 ----
 ====
 
-This will allow the `Phone#person` to function properly.
-
-[NOTE]
-====
-The additional columns will automatically be returned when using the `*` notation.
-====
+This will allow the `Phone#person` to function properly since the `many-to-one` or `one-to-one`
+association is going to use a Proxy that will be initialized when being navigated for the first time.
 
 It is possible to eagerly join the `Phone` and the `Person` entities to avoid the possible extra roundtrip for initializing the `many-to-one` association.
-
-[[sql-jpa-entity-associations-query-many-to-one-join-example]]
-.JPA native query selecting entities with joined many-to-one association
-====
-[source, JAVA, indent=0]
-----
-include::{sourcedir}/SQLTest.java[tags=sql-jpa-entity-associations-query-many-to-one-join-example]
-----
-
-[source, SQL, indent=0]
-----
-include::{extrasdir}/sql-jpa-entity-associations-query-many-to-one-join-example.sql[]
-----
-====
 
 [[sql-hibernate-entity-associations-query-many-to-one-join-example]]
 .Hibernate native query selecting entities with joined many-to-one association
@@ -536,6 +519,27 @@ include::{sourcedir}/SQLTest.java[tags=sql-hibernate-multiple-scalar-values-dto-
 ----
 ====
 
+You can also use the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/NamedNativeQuery.html[`@NamedNativeQuery`] Hibernate annotation
+to customize the named query using various configurations such as fetch mode, cacheability, time out interval.
+
+[[sql-multiple-scalar-values-dto-NamedNativeQuery-hibernate-example]]
+.Multiple scalar values using `ConstructorResult` and Hibernate `NamedNativeQuery`
+====
+[source, JAVA, indent=0]
+----
+include::{modeldir}/Phone.java[tags=sql-multiple-scalar-values-dto-NamedNativeQuery-hibernate-example]
+----
+====
+
+[[sql-hibernate-multiple-scalar-values-dto-hibernate-named-query-example]]
+.Hibernate `NamedNativeQuery` named native query selecting multiple scalar values into a DTO
+====
+[source, JAVA, indent=0]
+----
+include::{sourcedir}/SQLTest.java[tags=sql-hibernate-multiple-scalar-values-dto-hibernate-named-query-example]
+----
+====
+
 [[sql-entity-named-queries]]
 ==== Named SQL queries selecting entities
 
@@ -640,6 +644,56 @@ include::{sourcedir}/SQLTest.java[tags=sql-jpa-composite-key-entity-associations
 include::{sourcedir}/SQLTest.java[tags=sql-hibernate-composite-key-entity-associations_named-query-example]
 ----
 ====
+
+[[sql-global-catalog-schema]]
+=== Resolving global catalog and schema in native SQL queries
+
+When using multiple database catalogs and schemas, Hibernate offers the possibility of
+setting a global catalog or schema so that you don't have to declare it explicitly for every entity.
+
+[[sql-global-catalog-schema-configuration]]
+.Setting global catalog and schema
+====
+[source, XML, indent=0]
+----
+<property name="hibernate.default_catalog" value="crm"/>
+<property name="hibernate.default_schema" value="analytics"/>
+----
+====
+
+This way, we can imply the global *crm* catalog and *analytics* schema in every JPQL, HQL or Criteria API query.
+
+However, for native queries, the SQL query is passed as is, therefore you need to explicitly set the global catalog and schema whenever you are referencing a database table.
+Fortunately, Hibernate allows you to resolve the current global catalog and schema using the following placeholders:
+
+{h-catalog}:: resolves the current `hibernate.default_catalog` configuration property value.
+{h-schema}:: resolves the current `hibernate.default_schema` configuration property value.
+{h-domain}:: resolves the current `hibernate.default_catalog` and `hibernate.default_schema` configuration property values (e.g. catalog.schema).
+
+Withe these placeholders, you can imply the catalog, schema, or both catalog and schema for every native query.
+
+So, when running the following native query:
+
+[source, JAVA, indent=0]
+----
+@NamedNativeQuery(
+    name = "last_30_days_hires",
+    query =
+        "select * " +
+        "from {h-domain}person " +
+        "where age(hired_on) < '30 days'",
+    resultClass = Person.class
+)
+----
+
+Hibernate is going to resolve the `{h-domain}` placeholder according to the values of the default catalog and schema:
+
+[source, SQL, indent=0]
+----
+SELECT *
+FROM   crm.analytics.person
+WHERE  age(hired_on) < '30 days'
+----
 
 [[sql-sp]]
 === Using stored procedures for querying
@@ -780,6 +834,32 @@ Since these servers can return multiple result sets and update counts,
 Hibernate will iterate the results and take the first result that is a result set as its return value, so everything else will be discarded.
 
 For SQL Server, if you can enable `SET NOCOUNT ON` in your procedure it will probably be more efficient, but this is not a requirement.
+====
+
+[[sql-sp-named-query]]
+=== Using named queries to call stored procedures
+
+Just like with SQL statements, you can also use named queries to call stored procedures.
+For this purpose, JPA defines the http://docs.oracle.com/javaee/7/api/javax/persistence/NamedStoredProcedureQuery.html[`@NamedStoredProcedureQuery`] annotation.
+
+[[sql-sp-ref-cursor-oracle-named-query-example]]
+.Oracle `REF_CURSOR` named query stored procedure
+====
+[source, JAVA, indent=0]
+----
+include::{modeldir}/Person.java[tags=sql-sp-ref-cursor-oracle-named-query-example]
+----
+====
+
+Calling this stored procedure is straightforward, as illustrated by the following example.
+
+[[sql-jpa-call-sp-ref-cursor-oracle-named-query-example]]
+.Calling an Oracle `REF_CURSOR` stored procedure using a JPA named query
+====
+[source, JAVA, indent=0]
+----
+include::{sourcedir}/OracleStoredProcedureTest.java[tags=sql-jpa-call-sp-ref-cursor-oracle-named-query-example]
+----
 ====
 
 [[sql-crud]]

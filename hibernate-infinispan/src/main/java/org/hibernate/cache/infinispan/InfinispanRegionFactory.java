@@ -132,7 +132,7 @@ public class InfinispanRegionFactory implements RegionFactory {
 			if ( c.clustering().cacheMode().isInvalidation() ) {
 				throw log.timestampsMustNotUseInvalidation();
 			}
-			if (c.eviction().strategy() != EvictionStrategy.NONE) {
+			if (c.eviction().strategy().isEnabled()) {
 				throw log.timestampsMustNotUseEviction();
 			}
 		}),
@@ -478,14 +478,10 @@ public class InfinispanRegionFactory implements RegionFactory {
 	}
 
 	private CacheKeysFactory determineCacheKeysFactory(SessionFactoryOptions settings, Properties properties) {
-		final CacheKeysFactory implicitFactory = settings.getMultiTenancyStrategy() != MultiTenancyStrategy.NONE
-				? DefaultCacheKeysFactory.INSTANCE
-				: SimpleCacheKeysFactory.INSTANCE;
-
 		return settings.getServiceRegistry().getService( StrategySelector.class ).resolveDefaultableStrategy(
 				CacheKeysFactory.class,
 				properties.get( AvailableSettings.CACHE_KEYS_FACTORY ),
-				implicitFactory
+				DefaultCacheKeysFactory.INSTANCE
 		);
 	}
 
@@ -622,7 +618,7 @@ public class InfinispanRegionFactory implements RegionFactory {
 		}
 		else if ( (suffixLoc = key.indexOf( MAX_ENTRIES_SUFFIX )) != -1 ) {
 			builder = getOrCreateConfig( prefixLoc, key, suffixLoc );
-			builder.eviction().maxEntries( Long.parseLong(value) );
+			builder.eviction().size( Long.parseLong(value) );
 		}
 		else if ( (suffixLoc = key.indexOf( LIFESPAN_SUFFIX )) != -1 ) {
 			builder = getOrCreateConfig( prefixLoc, key, suffixLoc );
@@ -711,8 +707,7 @@ public class InfinispanRegionFactory implements RegionFactory {
 				log.debugf("Region '%s' has additional configuration set through properties.", regionName);
 				builder.read(override.build(false));
 			}
-			// with multi-tenancy the keys will be wrapped
-			if (settings.getMultiTenancyStrategy() == MultiTenancyStrategy.NONE) {
+			if (getCacheKeysFactory() instanceof SimpleCacheKeysFactory) {
 				// the keys may not define hashCode/equals correctly (e.g. arrays)
 				if (metadata != null && metadata.getKeyType() != null) {
 					builder.dataContainer().keyEquivalence(new TypeEquivalance(metadata.getKeyType()));

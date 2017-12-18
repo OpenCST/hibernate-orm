@@ -1,6 +1,10 @@
-[[entity]]
+﻿[[entity]]
 === Entity types
-:sourcedir: extras
+:sourcedir-locking: ../../../../../test/java/org/hibernate/userguide/locking
+:sourcedir-mapping: ../../../../../test/java/org/hibernate/userguide/mapping/
+:sourcedir-proxy: ../../../../../test/java/org/hibernate/userguide/proxy
+:sourcedir-persister: ../../../../../test/java/org/hibernate/userguide/persister
+:extrasdir: extras
 
 .Usage of the word _entity_
 [NOTE]
@@ -95,11 +99,12 @@ We recommend that you declare consistently-named identifier attributes on persis
 
 The placement of the `@Id` annotation marks the <<chapters/domain/access.adoc#access,persistence state access strategy>>.
 
-.Identifier
+[[entity-pojo-identifier-mapping-example]]
+.Identifier mapping
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/Identifier.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-identifier-mapping-example, indent=0]
 ----
 ====
 
@@ -112,11 +117,12 @@ The main piece in mapping the entity is the `javax.persistence.Entity` annotatio
 The `@Entity` annotation defines just one attribute `name` which is used to give a specific entity name for use in JPQL queries.
 By default, the entity name represents the unqualified name of the entity class itself.
 
-.Simple `@Entity`
+[[entity-pojo-mapping-example]]
+.Simple `@Entity` mapping
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/SimpleEntity.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-mapping-example, indent=0]
 ----
 ====
 
@@ -125,11 +131,12 @@ The identifier uniquely identifies each row in that table.
 By default, the name of the table is assumed to be the same as the name of the entity.
 To explicitly give the name of the table or to specify other information about the table, we would use the `javax.persistence.Table` annotation.
 
+[[entity-pojo-table-mapping-example]]
 .Simple `@Entity` with `@Table`
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/SimpleEntityWithTable.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTableTest.java[tag=entity-pojo-table-mapping-example, indent=0]
 ----
 ====
 
@@ -158,88 +165,109 @@ Hibernate, however, works hard to make sure that does not happen within a given 
 In fact, Hibernate guarantees equivalence of persistent identity (database row) and Java identity inside a particular session scope.
 So if we ask a Hibernate `Session` to load that specific Person multiple times we will actually get back the same __instance__:
 
+[[entity-pojo-identity-scope-example]]
 .Scope of identity
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing1.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-identity-scope-example, indent=0]
 ----
 ====
 
-Consider another example using a persistent `java.util.Set`:
+Consider we have a `Library` parent entity which contains a `java.util.Set` of `Book` entities:
 
+[[entity-pojo-set-mapping-example]]
+Library entity mapping
+====
+[source,java]
+----
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-set-mapping-example, indent=0]
+----
+====
+
+[[entity-pojo-set-identity-scope-example]]
 .Set usage with Session-scoped identity
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing3.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-set-identity-scope-example, indent=0]
 ----
 ====
 
 However, the semantic changes when we mix instances loaded from different Sessions:
 
+[[entity-pojo-multi-session-identity-scope-example]]
 .Mixed Sessions
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing2.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-multi-session-identity-scope-example, indent=0]
 ----
 
 [source,java]
 ----
-include::{sourcedir}/entity/listing4.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-multi-session-set-identity-scope-example, indent=0]
 ----
 ====
 
-Specifically the outcome in this last example will depend on whether the `Person` class implemented equals/hashCode, and, if so, how.
+Specifically the outcome in this last example will depend on whether the `Book` class
+implemented equals/hashCode, and, if so, how.
+
+If the `Book` class did not override the default equals/hashCode,
+then the two `Book` object reference are not going to be equal since their references are different.
 
 Consider yet another case:
 
+[[entity-pojo-transient-set-identity-scope-example]]
 .Sets with transient entities
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing5.java[]
+include::{sourcedir-mapping}/identifier/SimpleEntityTest.java[tag=entity-pojo-transient-set-identity-scope-example, indent=0]
 ----
 ====
 
-In cases where you will be dealing with entities outside of a Session (whether they be transient or detached), especially in cases where you will be using them in Java collections,
+In cases where you will be dealing with entities outside of a Session (whether they be transient or detached),
+especially in cases where you will be using them in Java collections,
 you should consider implementing equals/hashCode.
 
 A common initial approach is to use the entity's identifier attribute as the basis for equals/hashCode calculations:
 
+[[entity-pojo-naive-equals-hashcode-example]]
 .Naive equals/hashCode implementation
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing6.java[]
+include::{sourcedir-mapping}/identifier/NaiveEqualsHashCodeEntityTest.java[tag=entity-pojo-naive-equals-hashcode-example, indent=0]
 ----
 ====
 
-It turns out that this still breaks when adding transient instance of `Person` to a set as we saw in the last example:
+It turns out that this still breaks when adding transient instance of `Book` to a set as we saw in the last example:
 
-.Still trouble
+[[entity-pojo-naive-equals-hashcode-example]]
+.Auto-generated identifiers with Sets and naive equals/hashCode
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing7.java[]
+include::{sourcedir-mapping}/identifier/NaiveEqualsHashCodeEntityTest.java[tag=entity-pojo-naive-equals-hashcode-persist-example, indent=0]
 ----
 ====
 
-The issue here is a conflict between _the use of generated identifier_, _the contract of `Set`_ and _the equals/hashCode implementations_.
-`Set` says that the equals/hashCode value for an object should not change while the object is part of the Set.
-But that is exactly what happened here because the equals/hasCode are based on the (generated) id, which was not set until the `session.getTransaction().commit()` call.
+The issue here is a conflict between the use of generated identifier, the contract of `Set` and the equals/hashCode implementations.
+`Set` says that the equals/hashCode value for an object should not change while the object is part of the `Set`.
+But that is exactly what happened here because the equals/hasCode are based on the (generated) id, which was not set until the JPA transaction is committed.
 
 Note that this is just a concern when using generated identifiers.
 If you are using assigned identifiers this will not be a problem, assuming the identifier value is assigned prior to adding to the `Set`.
 
 Another option is to force the identifier to be generated and set prior to adding to the `Set`:
 
-.Forcing identifier generation
+[[entity-pojo-naive-equals-hashcode-persist-force-flush-example]]
+.Forcing the flush before adding to the Set
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing8.java[]
+include::{sourcedir-mapping}/identifier/NaiveEqualsHashCodeEntityTest.java[tag=entity-pojo-naive-equals-hashcode-persist-force-flush-example, indent=0]
 ----
 ====
 
@@ -247,57 +275,216 @@ But this is often not feasible.
 
 The final approach is to use a "better" equals/hashCode implementation, making use of a natural-id or business-key.
 
-.Better equals/hashCode with natural-id
+[[entity-pojo-natural-id-equals-hashcode-example]]
+.Natural Id equals/hashCode
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/listing9.java[]
+include::{sourcedir-mapping}/identifier/NaturalIdEqualsHashCodeEntityTest.java[tag=entity-pojo-natural-id-equals-hashcode-example, indent=0]
+----
+====
+
+This time, when adding a `Book` to the `Library` `Set`, you can retrieve the `Book` even after it's being persisted:
+
+[[entity-pojo-natural-id-equals-hashcode-persist-example]]
+.Natural Id equals/hashCode persist example
+====
+[source,java]
+----
+include::{sourcedir-mapping}/identifier/NaturalIdEqualsHashCodeEntityTest.java[tag=entity-pojo-natural-id-equals-hashcode-persist-example, indent=0]
 ----
 ====
 
 As you can see the question of equals/hashCode is not trivial, nor is there a one-size-fits-all solution.
 
+[TIP]
+====
+Although using a natural-id is best for `equals` and `hashCode`, sometimes you only have the entity identifier that provides a unique constraint.
+
+It's possible to use the entity identifier for equality check, but it needs a workaround:
+
+- you need to provide a constant value for `hashCode` so that the hash code value does not change before and after the entity is flushed.
+- you need to compare the entity identifier equality only for non-transient entities.
+====
+
 For details on mapping the identifier, see the <<chapters/domain/identifiers.adoc#identifiers,Identifiers>> chapter.
 
-[[entity-pojo-optlock]]
-==== Mapping optimistic locking
+[[entity-sql-query-mapping]]
+==== Mapping the entity to a SQL query
 
-JPA defines support for optimistic locking based on either a version (sequential numeric) or timestamp strategy.
-To enable this style of optimistic locking simply add the `javax.persistence.Version` to the persistent attribute that defines the optimistic locking value.
-According to JPA, the valid types for these attributes are limited to:
+You can map an entity to a SQL query using the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/Subselect.html[`@Subselect`] annotation.
 
-* `int` or `Integer`
-* `short` or `Short`
-* `long` or `Long`
-* `java.sql.Timestamp`
-
-.Version
+[[mapping-Subselect-example]]
+.`@Subselect` entity mapping
 ====
 [source,java]
 ----
-include::{sourcedir}/entity/Version.java[]
-----
-
-[source,java]
-----
-include::{sourcedir}/entity/Timestamp.java[]
-----
-
-[source,java]
-----
-include::{sourcedir}/entity/Instant.java[]
+include::{sourcedir-mapping}/basic/SubselectTest.java[tag=mapping-Subselect-example,indent=0]
 ----
 ====
 
-Hibernate supports a form of optimistic locking that does not require a dedicated "version attribute".
-This is intended mainly for use with modeling legacy schemas.
-The idea is that you can get Hibernate to perform "version checks" using either all of the entity's attributes, or just the attributes that have changed.
-This is achieved through the use of the `org.hibernate.annotations.OptimisticLocking` annotation which defines a single attribute of type `org.hibernate.annotations.OptimisticLockType`.
-There are 4 available OptimisticLockTypes:
+In the example above, the `Account` entity does not retain any balance since every account operation is registered as an `AccountTransaction`.
+To find the `Account` balance, we need to query the `AccountSummary` which shares the same identifier with the `Account` entity.
 
-`NONE`:: optimistic locking is disabled even if there is a `@Version` annotation present
-`VERSION` (the default)::  performs optimistic locking based on a `@Version` as described above
-`ALL`:: performs optimistic locking based on _all_ fields as part of an expanded WHERE clause restriction for the UPDATE/DELETE SQL statements
-`DIRTY`:: performs optimistic locking based on _dirty_ fields as part of an expanded WHERE clause restriction for the UPDATE/DELETE SQL statements.
+However, the `AccountSummary` is not mapped to a physical table, but to an SQL query.
 
+So, if we have the following `AccountTransaction` record, the `AccountSummary` balance will mach the proper amount of money in this `Account`.
 
+[[mapping-Subselect-entity-find-example]]
+.Finding a `@Subselect` entity
+====
+[source,java]
+----
+include::{sourcedir-mapping}/basic/SubselectTest.java[tag=mapping-Subselect-entity-find-example,indent=0]
+----
+====
+
+If we add a new `AccountTransaction` entity and refresh the `AccountSummary` entity, the balance is updated accordingly:
+
+[[mapping-Subselect-refresh-find-example]]
+.Refreshing a `@Subselect` entity
+====
+[source,java]
+----
+include::{sourcedir-mapping}/basic/SubselectTest.java[tag=mapping-Subselect-entity-refresh-example,indent=0]
+----
+====
+
+The goal of the `@Synchronize` annotation in the `AccountSummary` entity mapping is to instruct Hibernate which database tables are needed by the
+underlying `@Subselect` SQL query. This way, when executing a HQL or JPQL which selects from the `AccountSummary` entity,
+Hibernate will trigger a Persistence Context flush if there are pending `Account`, `Client` or `AccountTransaction` entity state transitions.
+
+[[entity-proxy]]
+==== Define a custom entity proxy
+
+By default, when it needs to use a proxy instead of the actual Pojo, Hibernate is going to use a Bytecode manipulation library like
+http://jboss-javassist.github.io/javassist/[Javassist] or
+http://bytebuddy.net/[Byte Buddy].
+
+However, if the entity class is final, Javassist will not create a Proxy and you will get a Pojo even when you only need a Proxy reference.
+In this case, you could proxy an interface that this particular entity implements, as illustrated by the following example.
+
+[[entity-proxy-interface-mapping]]
+.Final entity class implementing the `Identifiable` interface
+====
+[source,java]
+----
+include::{sourcedir-proxy}/ProxyInterfaceTest.java[tag=entity-proxy-interface-mapping,indent=0]
+----
+====
+
+The https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/Proxy.html[`@Proxy`]
+annotation is used to specify a custom Proxy implementation for the current annotated entity.
+
+When loading the `Book` entity proxy, Hibernate is going to proxy the `Identifiable` interface instead as illustarted by the following example:
+
+[[entity-proxy-persist-mapping]]
+.Proxying the final entity class implementing the `Identifiable` interface
+====
+[source,java]
+----
+include::{sourcedir-proxy}/ProxyInterfaceTest.java[tag=entity-proxy-persist-mapping,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/entity/entity-proxy-persist-mapping.sql[]
+----
+====
+
+As you can see in the associated SQL snippet, Hibernate issues no SQL SELECT query since the Proxy can be
+constructed without needing to fetch the actual entity Pojo.
+
+[[entity-tuplizer]]
+==== Dynamic entity proxies using the @Tuplizer annotation
+
+It is possible to map your entities as dynamic proxies using
+the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/Tuplizer.html[`@Tuplizer`] annotation.
+
+In the following entity mapping, both the embeddable and the entity are mapped as interfaces, not Pojos.
+
+[[entity-tuplizer-entity-mapping]]
+.Dynamic entity proxy mapping
+====
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/Cuisine.java[tag=entity-tuplizer-entity-mapping,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/Country.java[tag=entity-tuplizer-entity-mapping,indent=0]
+----
+====
+
+The `@Tuplizer` instructs Hibernate to use the `DynamicEntityTuplizer` and `DynamicEmbeddableTuplizer` to handle
+the associated entity and embeddable object types.
+
+Both the `Cuising` entity and the `Country` embeddable types are going to be instantiated as Java dynamic proxies,
+as you can see in the following `DynamicInstantiator` example:
+
+[[entity-tuplizer-instantiator]]
+.Instantiating entities and embeddables as dynamic proxies
+====
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/DynamicEntityTuplizer.java[tag=entity-tuplizer-instantiator,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/DynamicEmbeddableTuplizer.java[tag=entity-tuplizer-instantiator,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/DynamicInstantiator.java[tag=entity-tuplizer-instantiator,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/ProxyHelper.java[tag=entity-tuplizer-instantiator,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/DataProxyHandler.java[tag=entity-tuplizer-instantiator,indent=0]
+----
+====
+
+With the `DynamicInstantiator` in place, we can work with the dynamic proxy entities just like with Pojo entities.
+
+[[entity-tuplizer-dynamic-proxy-example]]
+.Persisting entities and embeddables as dynamic proxies
+====
+[source,java]
+----
+include::{sourcedir-proxy}/tuplizer/TuplizerTest.java[tag=entity-tuplizer-dynamic-proxy-example,indent=0]
+----
+====
+
+[[entity-persister]]
+==== Define a custom entity persister
+
+The https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/Persister.html[`@Persister`] annotation is used to specify a custom entity or collection persister.
+
+For entities, the custom persister must implement the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/persister/entity/EntityPersister.html[`EntityPersister`] interface.
+
+For collections, the custom persister must implement the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/persister/collection/CollectionPersister.html[`CollectionPersister`] interface.
+
+[[entity-persister-mapping]]
+.Entity persister mapping
+====
+[source,java]
+----
+include::{sourcedir-persister}/Author.java[tag=entity-persister-mapping,indent=0]
+----
+
+[source,java]
+----
+include::{sourcedir-persister}/Book.java[tag=entity-persister-mapping,indent=0]
+----
+====
+
+By providing you own `EntityPersister` and `CollectionPersister` implementations,
+you can control how entities and collections are persisted in to the database.

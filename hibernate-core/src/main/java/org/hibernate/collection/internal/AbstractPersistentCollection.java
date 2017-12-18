@@ -201,7 +201,7 @@ public abstract class AbstractPersistentCollection implements Serializable, Pers
 				throwLazyInitializationException( "could not initialize proxy - no Session" );
 			}
 		}
-		else if ( !session.isOpen() ) {
+		else if ( !session.isOpenOrWaitingForAutoClose() ) {
 			if ( allowLoadOutsideTransaction ) {
 				tempSession = openTemporarySessionForLoading();
 			}
@@ -218,7 +218,6 @@ public abstract class AbstractPersistentCollection implements Serializable, Pers
 			}
 		}
 
-
 		SharedSessionContractImplementor originalSession = null;
 		boolean isJTA = false;
 
@@ -227,9 +226,8 @@ public abstract class AbstractPersistentCollection implements Serializable, Pers
 			originalSession = session;
 			session = tempSession;
 
-
 			isJTA = session.getTransactionCoordinator().getTransactionCoordinatorBuilder().isJta();
-			
+
 			if ( !isJTA ) {
 				// Explicitly handle the transactions only if we're not in
 				// a JTA environment.  A lazy loading temporary session can
@@ -535,7 +533,7 @@ public abstract class AbstractPersistentCollection implements Serializable, Pers
 	@Override
 	public boolean afterInitialize() {
 		setInitialized();
-		//do this bit afterQuery setting initialized to true or it will recurse
+		//do this bit after setting initialized to true or it will recurse
 		if ( operationQueue != null ) {
 			performQueuedOperations();
 			operationQueue = null;

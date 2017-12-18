@@ -19,13 +19,12 @@ import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
  */
 public class OneToManyUnidirectionalTest extends BaseEntityManagerFunctionalTestCase {
-
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {

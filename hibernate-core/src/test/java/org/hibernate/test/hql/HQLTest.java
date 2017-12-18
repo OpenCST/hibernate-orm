@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.hibernate.QueryException;
+import org.hibernate.Session;
 import org.hibernate.dialect.AbstractHANADialect;
 import org.hibernate.dialect.DB2Dialect;
 import org.hibernate.dialect.H2Dialect;
@@ -63,11 +64,13 @@ import org.junit.Test;
 import antlr.RecognitionException;
 import antlr.collections.AST;
 
+import static org.hibernate.testing.junit4.ExtraAssertions.assertTyping;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Tests cases where the AST based query translator and the 'classic' query translator generate identical SQL.
@@ -108,6 +111,38 @@ public class HQLTest extends QueryTranslatorTestCase {
 	}
 
 	@Test
+	@TestForIssue(jiraKey = "HHH-2187")
+	public void testBogusQuery() {
+		try {
+			QueryTranslatorImpl translator = createNewQueryTranslator( "bogus" );
+			fail( "This should have failed with a QueryException" );
+		}
+		catch ( Throwable t ) {
+			assertTyping( QueryException.class, t );
+		}
+	}
+
+	@Test
+	@TestForIssue(jiraKey = "HHH-2187")
+	public void testBogusCreateQuery() {
+		Session session = openSession();
+		try {
+			session.beginTransaction();
+			session.createQuery( "Bogus" );
+			fail( "This should have failed with an IllegalArgumentException" );
+		}
+		catch ( IllegalArgumentException e ) {
+			if ( session.getTransaction().isActive() ) {
+				session.getTransaction().rollback();
+			}
+			assertTyping( QueryException.class, e.getCause() );
+		}
+		finally {
+			session.close();
+		}
+	}
+
+	@Test
 	public void testModulo() {
 		assertTranslation( "from Animal a where a.bodyWeight % 2 = 0" );
 	}
@@ -127,17 +162,23 @@ public class HQLTest extends QueryTranslatorTestCase {
     }
 
 	@Test
-	@SkipForDialect( value = { Oracle8iDialect.class, AbstractHANADialect.class } )
+	@SkipForDialect( value = {
+		Oracle8iDialect.class,
+		AbstractHANADialect.class,
+		PostgreSQL81Dialect.class,
+		MySQLDialect.class
+	} )
+
     public void testRowValueConstructorSyntaxInInListBeingTranslated() {
-		QueryTranslatorImpl translator = createNewQueryTranslator("from LineItem l where l.id in (?)");
+		QueryTranslatorImpl translator = createNewQueryTranslator("from LineItem l where l.id in (?1)");
 		assertInExist("'in' should be translated to 'and'", false, translator);
-		translator = createNewQueryTranslator("from LineItem l where l.id in ?");
+		translator = createNewQueryTranslator("from LineItem l where l.id in ?1");
 		assertInExist("'in' should be translated to 'and'", false, translator);
 		translator = createNewQueryTranslator("from LineItem l where l.id in (('a1',1,'b1'),('a2',2,'b2'))");
 		assertInExist("'in' should be translated to 'and'", false, translator);
-		translator = createNewQueryTranslator("from Animal a where a.id in (?)");
+		translator = createNewQueryTranslator("from Animal a where a.id in (?1)");
 		assertInExist("only translated tuple has 'in' syntax", true, translator);
-		translator = createNewQueryTranslator("from Animal a where a.id in ?");
+		translator = createNewQueryTranslator("from Animal a where a.id in ?1");
 		assertInExist("only translated tuple has 'in' syntax", true, translator);
 		translator = createNewQueryTranslator("from LineItem l where l.id in (select a1 from Animal a1 left join a1.offspring o where a1.id = 1)");
 		assertInExist("do not translate sub-queries", true, translator);
@@ -146,15 +187,15 @@ public class HQLTest extends QueryTranslatorTestCase {
 	@Test
 	@RequiresDialectFeature( DialectChecks.SupportsRowValueConstructorSyntaxInInListCheck.class )
     public void testRowValueConstructorSyntaxInInList() {
-		QueryTranslatorImpl translator = createNewQueryTranslator("from LineItem l where l.id in (?)");
+		QueryTranslatorImpl translator = createNewQueryTranslator("from LineItem l where l.id in (?1)");
 		assertInExist(" 'in' should be kept, since the dialect supports this syntax", true, translator);
-		translator = createNewQueryTranslator("from LineItem l where l.id in ?");
+		translator = createNewQueryTranslator("from LineItem l where l.id in ?1");
 		assertInExist(" 'in' should be kept, since the dialect supports this syntax", true, translator);
 		translator = createNewQueryTranslator("from LineItem l where l.id in (('a1',1,'b1'),('a2',2,'b2'))");
 		assertInExist(" 'in' should be kept, since the dialect supports this syntax", true,translator);
-		translator = createNewQueryTranslator("from Animal a where a.id in (?)");
+		translator = createNewQueryTranslator("from Animal a where a.id in (?1)");
 		assertInExist("only translated tuple has 'in' syntax", true, translator);
-		translator = createNewQueryTranslator("from Animal a where a.id in ?");
+		translator = createNewQueryTranslator("from Animal a where a.id in ?1");
 		assertInExist("only translated tuple has 'in' syntax", true, translator);
 		translator = createNewQueryTranslator("from LineItem l where l.id in (select a1 from Animal a1 left join a1.offspring o where a1.id = 1)");
 		assertInExist("do not translate sub-queries", true, translator);
@@ -249,13 +290,13 @@ public class HQLTest extends QueryTranslatorTestCase {
 		assertEquals( "incorrect return type count", 1, translator.getReturnTypes().length );
 		assertEquals( "incorrect return type", CalendarDateType.INSTANCE, translator.getReturnTypes()[0] );
 
-		translator = createNewQueryTranslator( "from Order o where o.orderDate > ?" );
-		assertEquals( "incorrect expected param type", CalendarDateType.INSTANCE, translator.getParameterTranslations().getOrdinalParameterExpectedType( 0 ) );
+		translator = createNewQueryTranslator( "from Order o where o.orderDate > ?1" );
+		assertEquals( "incorrect expected param type", CalendarDateType.INSTANCE, translator.getParameterTranslations().getPositionalParameterInformation( 1 ).getExpectedType() );
 
-		translator = createNewQueryTranslator( "select o.orderDate + ? from Order o" );
+		translator = createNewQueryTranslator( "select o.orderDate + ?1 from Order o" );
 		assertEquals( "incorrect return type count", 1, translator.getReturnTypes().length );
 		assertEquals( "incorrect return type", CalendarDateType.INSTANCE, translator.getReturnTypes()[0] );
-		assertEquals( "incorrect expected param type", DoubleType.INSTANCE, translator.getParameterTranslations().getOrdinalParameterExpectedType( 0 ) );
+		assertEquals( "incorrect expected param type", DoubleType.INSTANCE, translator.getParameterTranslations().getPositionalParameterInformation( 1 ).getExpectedType() );
 
 	}
 
@@ -969,7 +1010,7 @@ public class HQLTest extends QueryTranslatorTestCase {
 	@Test
 	public void testImplicitJoins() throws Exception {
 		// Two dots...
-		assertTranslation( "from Animal an where an.mother.bodyWeight > ?" );
+		assertTranslation( "from Animal an where an.mother.bodyWeight > ?1" );
 		assertTranslation( "from Animal an where an.mother.bodyWeight > 10" );
 		assertTranslation( "from Dog dog where dog.mother.bodyWeight > 10" );
 		// Three dots...
@@ -1179,7 +1220,7 @@ public class HQLTest extends QueryTranslatorTestCase {
 
 	@Test
 	public void testPositionalParameters() throws Exception {
-		assertTranslation( "from Animal an where an.bodyWeight > ?" );
+		assertTranslation( "from Animal an where an.bodyWeight > ?1" );
 	}
 
 	@Test
@@ -1453,7 +1494,7 @@ public class HQLTest extends QueryTranslatorTestCase {
 
 	@Test
 	public void testCorrelatedSubselect1() throws Exception {
-		// The old translator generates the theta join beforeQuery the condition in the sub query.
+		// The old translator generates the theta join before the condition in the sub query.
 		// TODO: Decide if we want to bother generating the theta join in the same order (non simple).
 		assertTranslation( "from Animal a where exists (from a.offspring o where o.bodyWeight>10)" );
 	}

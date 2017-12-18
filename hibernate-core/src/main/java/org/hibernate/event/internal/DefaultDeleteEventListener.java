@@ -250,7 +250,7 @@ public class DefaultDeleteEventListener implements DeleteEventListener {
 				propTypes
 		);
 
-		// beforeQuery any callbacks, etc, so subdeletions see that this deletion happened first
+		// before any callbacks, etc, so subdeletions see that this deletion happened first
 		persistenceContext.setEntryStatus( entityEntry, Status.DELETED );
 		final EntityKey key = session.generateEntityKey( entityEntry.getId(), persister );
 
@@ -258,7 +258,7 @@ public class DefaultDeleteEventListener implements DeleteEventListener {
 
 		new ForeignKeys.Nullifier( entity, true, false, session )
 				.nullifyTransientReferences( entityEntry.getDeletedState(), propTypes );
-		new Nullability( session ).checkNullability( entityEntry.getDeletedState(), persister, true );
+		new Nullability( session ).checkNullability( entityEntry.getDeletedState(), persister, Nullability.NullabilityCheckType.DELETE );
 		persistenceContext.getNullifiableEntityKeys().add( key );
 
 		if ( isOrphanRemovalBeforeUpdates ) {
@@ -277,7 +277,7 @@ public class DefaultDeleteEventListener implements DeleteEventListener {
 			);
 		}
 		else {
-			// Ensures that containing deletions happen beforeQuery sub-deletions
+			// Ensures that containing deletions happen before sub-deletions
 			session.getActionQueue().addAction(
 					new EntityDeleteAction(
 							entityEntry.getId(),
@@ -293,7 +293,7 @@ public class DefaultDeleteEventListener implements DeleteEventListener {
 
 		cascadeAfterDelete( session, persister, entity, transientEntities );
 
-		// the entry will be removed afterQuery the flush, and will no longer
+		// the entry will be removed after the flush, and will no longer
 		// override the stale snapshot
 		// This is now handled by removeEntity() in EntityDeleteAction
 		//persistenceContext.removeDatabaseSnapshot(key);

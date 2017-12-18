@@ -38,8 +38,10 @@ import org.hibernate.internal.CoreLogging;
 import org.hibernate.internal.CoreMessageLogger;
 import org.hibernate.jdbc.WorkExecutor;
 import org.hibernate.jdbc.WorkExecutorVisitable;
+import org.hibernate.resource.jdbc.ResourceRegistry;
 import org.hibernate.resource.jdbc.internal.LogicalConnectionManagedImpl;
 import org.hibernate.resource.jdbc.internal.LogicalConnectionProvidedImpl;
+import org.hibernate.resource.jdbc.internal.ResourceRegistryStandardImpl;
 import org.hibernate.resource.jdbc.spi.JdbcSessionOwner;
 import org.hibernate.resource.jdbc.spi.LogicalConnectionImplementor;
 import org.hibernate.resource.transaction.backend.jdbc.spi.JdbcResourceTransaction;
@@ -66,7 +68,7 @@ public class JdbcCoordinatorImpl implements JdbcCoordinator {
 	/**
 	 * This is a marker value to insert instead of null values for when a Statement gets registered in xref
 	 * but has no associated ResultSets registered. This is useful to efficiently check against duplicate
-	 * registration but you'll have to check against instance equality rather than null beforeQuery attempting
+	 * registration but you'll have to check against instance equality rather than null before attempting
 	 * to add elements to this set.
 	 */
 	private static final Set<ResultSet> EMPTY_RESULTSET = Collections.emptySet();
@@ -94,13 +96,17 @@ public class JdbcCoordinatorImpl implements JdbcCoordinator {
 			JdbcSessionOwner owner) {
 		this.isUserSuppliedConnection = userSuppliedConnection != null;
 
+		final ResourceRegistry resourceRegistry = new ResourceRegistryStandardImpl(
+				owner.getJdbcSessionContext().getObserver()
+		);
 		if ( isUserSuppliedConnection ) {
-			this.logicalConnection = new LogicalConnectionProvidedImpl( userSuppliedConnection );
+			this.logicalConnection = new LogicalConnectionProvidedImpl( userSuppliedConnection, resourceRegistry );
 		}
 		else {
 			this.logicalConnection = new LogicalConnectionManagedImpl(
 					owner.getJdbcConnectionAccess(),
-					owner.getJdbcSessionContext()
+					owner.getJdbcSessionContext(),
+					resourceRegistry
 			);
 		}
 		this.owner = owner;
@@ -260,7 +266,7 @@ public class JdbcCoordinatorImpl implements JdbcCoordinator {
 
 	@Override
 	public void afterStatementExecution() {
-		LOG.tracev( "Starting afterQuery statement execution processing [{0}]", getConnectionReleaseMode() );
+		LOG.tracev( "Starting after statement execution processing [{0}]", getConnectionReleaseMode() );
 		if ( getConnectionReleaseMode() == ConnectionReleaseMode.AFTER_STATEMENT ) {
 			if ( ! releasesEnabled ) {
 				LOG.debug( "Skipping aggressive release due to manual disabling" );

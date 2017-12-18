@@ -132,7 +132,7 @@ public class ListAddTest extends BaseNonConfigCoreFunctionalTestCase {
 	}
 
 	/**
-	 * This test succeeds thanks to a dirty workaround consisting in initializing the ordered question list afterQuery the
+	 * This test succeeds thanks to a dirty workaround consisting in initializing the ordered question list after the
 	 * question has been inserted
 	 */
 	@Test
@@ -165,7 +165,7 @@ public class ListAddTest extends BaseNonConfigCoreFunctionalTestCase {
 		Transaction transaction = session.beginTransaction();
 
 		Quizz quizz = session.get( Quizz.class, 1 );
-		assertThat(  "expected 4 questions", quizz.getQuestions().size(), is(3) );
+		assertThat(  "expected 3 questions", quizz.getQuestions().size(), is(3) );
 		transaction.commit();
 		session.close();
 

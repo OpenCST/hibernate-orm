@@ -198,7 +198,7 @@ public class SchemaExport {
 	/**
 	 * Should we stop once an error occurs?
 	 *
-	 * @param haltOnError True if export should stop afterQuery error.
+	 * @param haltOnError True if export should stop after error.
 	 *
 	 * @return this
 	 */
@@ -325,7 +325,8 @@ public class SchemaExport {
 			}
 			scriptTarget = Helper.interpretScriptTargetSetting(
 					outputFile,
-					serviceRegistry.getService( ClassLoaderService.class )
+					serviceRegistry.getService( ClassLoaderService.class ),
+					(String) serviceRegistry.getService( ConfigurationService.class ).getSettings().get( AvailableSettings.HBM2DDL_CHARSET_NAME )
 			);
 		}
 		else {
@@ -454,9 +455,9 @@ public class SchemaExport {
 	}
 
 	/**
-	 * Returns a List of all Exceptions which occured during the export.
+	 * Returns a List of all Exceptions which occurred during the export.
 	 *
-	 * @return A List containing the Exceptions occured during the export
+	 * @return A List containing the Exceptions occurred during the export
 	 */
 	public List getExceptions() {
 		return exceptions;

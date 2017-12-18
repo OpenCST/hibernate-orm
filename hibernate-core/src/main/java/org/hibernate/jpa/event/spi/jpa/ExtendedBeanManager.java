@@ -6,32 +6,23 @@
  */
 package org.hibernate.jpa.event.spi.jpa;
 
-import javax.enterprise.inject.spi.BeanManager;
-
 /**
- * This contract and the nested LifecycleListener contract represent the changes
- * we'd like to propose to the CDI spec.  The idea being simply to allow contextual
- * registration of BeanManager lifecycle callbacks
- *
- * @author Steve Ebersole
+ * @deprecated Use {@link org.hibernate.resource.beans.spi.ExtendedBeanManager} instead
  */
-public interface ExtendedBeanManager {
-	/**
-	 * Register a BeanManager LifecycleListener
-	 *
-	 * @param lifecycleListener The listener to register
-	 */
+@Deprecated
+public interface ExtendedBeanManager extends org.hibernate.resource.beans.spi.ExtendedBeanManager {
+
 	void registerLifecycleListener(LifecycleListener lifecycleListener);
 
+	@Override
+	default void registerLifecycleListener(org.hibernate.resource.beans.spi.ExtendedBeanManager.LifecycleListener lifecycleListener) {
+		registerLifecycleListener( lifecycleListener::beanManagerInitialized );
+	}
+
 	/**
-	 * Contract for things interested in receiving notifications of
-	 * BeanManager lifecycle events.
-	 * <p/>
-	 * A "beanManagerDestroyed" notifications would probably also be generally
-	 * useful, although we do not need it here and not sure WildFly can really
-	 * tell us that reliably.
+	 * @deprecated Use {@link org.hibernate.resource.beans.spi.ExtendedBeanManager.LifecycleListener} instead
 	 */
-	interface LifecycleListener {
-		void beanManagerInitialized(BeanManager beanManager);
+	@Deprecated
+	interface LifecycleListener extends org.hibernate.resource.beans.spi.ExtendedBeanManager.LifecycleListener {
 	}
 }

@@ -56,8 +56,13 @@ public class DefaultRefreshEventListener implements RefreshEventListener {
 	public void onRefresh(RefreshEvent event, Map refreshedAlready) {
 
 		final EventSource source = event.getSession();
-
-		boolean isTransient = !source.contains( event.getObject() );
+		boolean isTransient;
+		if ( event.getEntityName() != null ) {
+			isTransient = !source.contains( event.getEntityName(), event.getObject() );
+		}
+		else {
+			isTransient = !source.contains( event.getObject() );
+		}
 		if ( source.getPersistenceContext().reassociateIfUninitializedProxy( event.getObject() ) ) {
 			if ( isTransient ) {
 				source.setReadOnly( event.getObject(), source.isDefaultReadOnly() );
@@ -139,7 +144,7 @@ public class DefaultRefreshEventListener implements RefreshEventListener {
 			}
 		}
 
-		if ( persister.hasCache() ) {
+		if ( persister.canWriteToCache() ) {
 			Object previousVersion = null;
 			if ( persister.isVersionPropertyGenerated() ) {
 				// we need to grab the version value from the entity, otherwise
@@ -169,7 +174,7 @@ public class DefaultRefreshEventListener implements RefreshEventListener {
 		String previousFetchProfile = source.getLoadQueryInfluencers().getInternalFetchProfile();
 		source.getLoadQueryInfluencers().setInternalFetchProfile( "refresh" );
 		Object result = persister.load( id, object, event.getLockOptions(), source );
-		// Keep the same read-only/modifiable setting for the entity that it had beforeQuery refreshing;
+		// Keep the same read-only/modifiable setting for the entity that it had before refreshing;
 		// If it was transient, then set it to the default for the source.
 		if ( result != null ) {
 			if ( !persister.isMutable() ) {

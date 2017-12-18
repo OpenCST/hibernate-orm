@@ -6,7 +6,9 @@
  */
 package org.hibernate.query;
 
+import java.util.Collection;
 import java.util.Set;
+import java.util.function.Consumer;
 import javax.persistence.Parameter;
 
 /**
@@ -15,6 +17,7 @@ import javax.persistence.Parameter;
  * @author Steve Ebersole
  */
 public interface ParameterMetadata {
+
 	/**
 	 * Does this parameter set contain any named parameters?
 	 *
@@ -52,4 +55,14 @@ public interface ParameterMetadata {
 	<T> QueryParameter<T> getQueryParameter(Integer position);
 
 	<T> QueryParameter<T> resolve(Parameter<T> param);
+
+	Collection<QueryParameter> getPositionalParameters();
+
+	Collection<QueryParameter> getNamedParameters();
+
+	int getParameterCount();
+
+	boolean containsReference(QueryParameter parameter);
+
+	void visitRegistrations(Consumer<QueryParameter> action);
 }

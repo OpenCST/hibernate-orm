@@ -42,7 +42,6 @@ import org.junit.After;
  * @author Strong Liu (stliu@hibernate.org)
  */
 public abstract class BaseEnversJPAFunctionalTestCase extends AbstractEnversTest {
-	private static final Logger log = Logger.getLogger( BaseEnversJPAFunctionalTestCase.class );
 
 	private static final Dialect dialect = Dialect.getDialect();
 
@@ -242,7 +241,7 @@ public abstract class BaseEnversJPAFunctionalTestCase extends AbstractEnversTest
 		catch (IllegalStateException e) {
 		}
 		if ( em.isOpen() ) {
-			// as we open an EM beforeQuery the test runs, it will still be open if the test uses a custom EM.
+			// as we open an EM before the test runs, it will still be open if the test uses a custom EM.
 			// or, the person may have forgotten to close. So, do not raise a "fail", but log the fact.
 			em.close();
 			log.warn( "The EntityManager is not closed. Closing it." );
@@ -261,28 +260,10 @@ public abstract class BaseEnversJPAFunctionalTestCase extends AbstractEnversTest
 	}
 
 	protected AuditReader getAuditReader() {
-		EntityManager entityManager = getOrCreateEntityManager();
-		SessionImplementor sessionImplementor = entityManager.unwrap( SessionImplementor.class );
-
-		if ( sessionImplementor.getTransactionCoordinator().getTransactionCoordinatorBuilder().isJta() ) {
-			if ( !JtaStatusHelper.isActive( TestingJtaPlatformImpl.INSTANCE.getTransactionManager() ) ) {
-				try {
-					TestingJtaPlatformImpl.INSTANCE.getTransactionManager().begin();
-				}
-				catch (Exception e) {
-					e.printStackTrace();
-				}
-			}
-		}
-		else if ( !entityManager.getTransaction().isActive() ) {
-			entityManager.getTransaction().begin();
-		}
-
 		if ( auditReader != null ) {
 			return auditReader;
 		}
-
-		return auditReader = AuditReaderFactory.get( entityManager );
+		return auditReader = AuditReaderFactory.get( getOrCreateEntityManager() );
 	}
 
 	protected EntityManager createIsolatedEntityManager() {

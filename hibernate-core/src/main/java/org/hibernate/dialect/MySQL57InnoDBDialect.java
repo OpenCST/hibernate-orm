@@ -13,7 +13,9 @@ import org.hibernate.dialect.function.StaticPrecisionFspTimestampFunction;
 
 /**
  * @author Gail Badner
+ * @deprecated Use "hibernate.dialect.storage_engine=innodb" environment variable or JVM system property instead.
  */
+@Deprecated
 public class MySQL57InnoDBDialect extends MySQL5InnoDBDialect {
 	public MySQL57InnoDBDialect() {
 		super();
@@ -64,5 +66,13 @@ public class MySQL57InnoDBDialect extends MySQL5InnoDBDialect {
 
 		// from_unixtime(), timestamp() are functions that return TIMESTAMP that do not support a
 		// fractional seconds precision argument (so there's no need to override them here):
+	}
+
+	/**
+	 * @see <a href="https://dev.mysql.com/worklog/task/?id=7019">MySQL 5.7 work log</a>
+	 * @return supports IN clause row value expressions
+	 */
+	public boolean supportsRowValueConstructorSyntaxInInList() {
+		return true;
 	}
 }

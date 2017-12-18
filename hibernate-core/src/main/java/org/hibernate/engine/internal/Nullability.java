@@ -11,11 +11,14 @@ import java.util.Iterator;
 import org.hibernate.HibernateException;
 import org.hibernate.PropertyValueException;
 import org.hibernate.bytecode.enhance.spi.LazyPropertyInitializer;
+import org.hibernate.engine.spi.CascadeStyle;
 import org.hibernate.engine.spi.CascadingActions;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
+import org.hibernate.engine.spi.Status;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.type.CollectionType;
 import org.hibernate.type.CompositeType;
+import org.hibernate.type.EntityType;
 import org.hibernate.type.Type;
 
 /**
@@ -49,7 +52,21 @@ public final class Nullability {
 	public void checkNullability(
 			final Object[] values,
 			final EntityPersister persister,
-			final boolean isUpdate) throws HibernateException {
+			final boolean isUpdate) {
+		checkNullability( values, persister, isUpdate ? NullabilityCheckType.UPDATE : NullabilityCheckType.CREATE );
+	}
+
+	public enum NullabilityCheckType {
+		CREATE,
+		UPDATE,
+		DELETE
+	}
+
+	public void checkNullability(
+			final Object[] values,
+			final EntityPersister persister,
+			final NullabilityCheckType checkType) {
+
 		/*
 		 * Typically when Bean Validation is on, we don't want to validate null values
 		 * at the Hibernate Core level. Hence the checkNullability setting.
@@ -60,7 +77,7 @@ public final class Nullability {
 			  * Check for any level one nullability breaks
 			  * Look at non null components to
 			  *   recursively check next level of nullability breaks
-			  * Look at Collections contraining component to
+			  * Look at Collections containing components to
 			  *   recursively check next level of nullability breaks
 			  *
 			  *
@@ -74,9 +91,9 @@ public final class Nullability {
 			  */
 
 			final boolean[] nullability = persister.getPropertyNullability();
-			final boolean[] checkability = isUpdate ?
-				persister.getPropertyUpdateability() :
-				persister.getPropertyInsertability();
+			final boolean[] checkability = checkType == NullabilityCheckType.CREATE
+					? persister.getPropertyInsertability()
+					: persister.getPropertyUpdateability();
 			final Type[] propertyTypes = persister.getPropertyTypes();
 
 			for ( int i = 0; i < values.length; i++ ) {
@@ -84,7 +101,6 @@ public final class Nullability {
 				if ( checkability[i] && values[i]!= LazyPropertyInitializer.UNFETCHED_PROPERTY ) {
 					final Object value = values[i];
 					if ( !nullability[i] && value == null ) {
-
 						//check basic level one nullablilty
 						throw new PropertyValueException(
 								"not-null property references a null or transient value",
@@ -161,11 +177,11 @@ public final class Nullability {
 		// IMPL NOTE : we currently skip checking "any" and "many to any" mappings.
 		//
 		// This is not the best solution.  But atm there is a mismatch between AnyType#getPropertyNullability
-		// and the fact that cascaded-saves for "many to any" mappings are not performed until afterQuery this nullability
+		// and the fact that cascaded-saves for "many to any" mappings are not performed until after this nullability
 		// check.  So the nullability check fails for transient entity elements with generated identifiers because
 		// the identifier is not yet generated/assigned (is null)
 		//
-		// The more correct fix would be to cascade saves of the many-to-any elements beforeQuery the Nullability checking
+		// The more correct fix would be to cascade saves of the many-to-any elements before the Nullability checking
 
 		if ( compositeType.isAnyType() ) {
 			return null;

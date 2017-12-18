@@ -21,7 +21,6 @@ import org.hibernate.cache.spi.RegionFactory;
  * @author <a href="brian.stansberry@jboss.com">Brian Stansberry</a>
  */
 public class CacheTestSupport {
-	private static final Logger log = Logger.getLogger( CacheTestSupport.class );
 
 	private static final String PREFER_IPV4STACK = "java.net.preferIPv4Stack";
 
@@ -65,21 +64,6 @@ public class CacheTestSupport {
         throwStoredException();
     }
 
-    public void avoidConcurrentFlush() {
-       // JG 2.6.1 has a problem where calling flush more than once too quickly
-       // can result in several second delays
-       sleep( 100 );
-    }
-
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        }
-        catch (InterruptedException e) {
-            log.warn("Interrupted during sleep", e);
-        }
-    }
-
     private void cleanUp() {
         for (Iterator it = factories.iterator(); it.hasNext(); ) {
             try {
@@ -105,7 +89,6 @@ public class CacheTestSupport {
             finally {
                 it.remove();
             }
-            avoidConcurrentFlush();
         }
         caches.clear();
     }

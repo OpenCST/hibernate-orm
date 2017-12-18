@@ -24,6 +24,7 @@ import javax.transaction.SystemException;
 import org.hibernate.HibernateException;
 import org.hibernate.LockMode;
 import org.hibernate.cache.CacheException;
+import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.jdbc.dialect.spi.DialectResolver;
 import org.hibernate.engine.jndi.JndiException;
@@ -52,7 +53,7 @@ import static org.jboss.logging.Logger.Level.WARN;
  * The jboss-logging {@link MessageLogger} for the hibernate-core module.  It reserves message ids ranging from
  * 00001 to 10000 inclusively.
  * <p/>
- * New messages must be added afterQuery the last message defined to ensure message codes are unique.
+ * New messages must be added after the last message defined to ensure message codes are unique.
  */
 @MessageLogger(projectCode = "HHH")
 public interface CoreMessageLogger extends BasicLogger {
@@ -299,7 +300,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	void factoryUnboundFromName(String name);
 
 	@LogMessage(level = ERROR)
-	@Message(value = "an assertion failure occured" + " (this may indicate a bug in Hibernate, but is more likely due"
+	@Message(value = "an assertion failure occurred" + " (this may indicate a bug in Hibernate, but is more likely due"
 			+ " to unsafe use of the session): %s", id = 99)
 	void failed(Throwable throwable);
 
@@ -359,11 +360,14 @@ public interface CoreMessageLogger extends BasicLogger {
 	void hibernateConnectionPoolSize(int poolSize, int minSize);
 
 	@LogMessage(level = WARN)
-	@Message(value = "Config specified explicit optimizer of [%s], but [%s=%s; honoring optimizer setting", id = 116)
+	@Message(value = "Config specified explicit optimizer of [%s], but [%s=%s]; using optimizer [%s] increment default of [%s].", id = 116)
 	void honoringOptimizerSetting(
 			String none,
 			String incrementParam,
-			int incrementSize);
+			int incrementSize,
+			String positiveOrNegative,
+			int defaultIncrementSize
+	);
 
 	@LogMessage(level = DEBUG)
 	@Message(value = "HQL: %s, time: %sms, rows: %s", id = 117)
@@ -467,8 +471,8 @@ public interface CoreMessageLogger extends BasicLogger {
 			String old,
 			String name);
 
-	@Message(value = "Javassist Enhancement failed: %s", id = 142)
-	String javassistEnhancementFailed(String entityName);
+	@Message(value = "Bytecode enhancement failed: %s", id = 142)
+	String bytecodeEnhancementFailed(String entityName);
 
 	@LogMessage(level = WARN)
 	@Message(value = "%s = false breaks the EJB3 specification", id = 144)
@@ -735,7 +739,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	void schemaUpdateComplete();
 
 	@LogMessage(level = WARN)
-	@Message(value = "Scoping types to session factory %s afterQuery already scoped %s", id = 233)
+	@Message(value = "Scoping types to session factory %s after already scoped %s", id = 233)
 	void scopingTypesToSessionFactoryAfterAlreadyScoped(
 			SessionFactoryImplementor factory,
 			SessionFactoryImplementor factory2);
@@ -927,7 +931,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unableToCleanUpPreparedStatement(@Cause SQLException e);
 
 	@LogMessage(level = WARN)
-	@Message(value = "Unable to cleanup temporary id table afterQuery use [%s]", id = 283)
+	@Message(value = "Unable to cleanup temporary id table after use [%s]", id = 283)
 	void unableToCleanupTemporaryIdTable(Throwable t);
 
 	@LogMessage(level = ERROR)
@@ -1058,16 +1062,16 @@ public interface CoreMessageLogger extends BasicLogger {
 	@Message(value = "Could not determine transaction status", id = 312)
 	String unableToDetermineTransactionStatus();
 
-	@Message(value = "Could not determine transaction status afterQuery commit", id = 313)
+	@Message(value = "Could not determine transaction status after commit", id = 313)
 	String unableToDetermineTransactionStatusAfterCommit();
 
 	@LogMessage(level = WARN)
-	@Message(value = "Unable to drop temporary id table afterQuery use [%s]", id = 314)
+	@Message(value = "Unable to drop temporary id table after use [%s]", id = 314)
 	void unableToDropTemporaryIdTable(String message);
 
 	@LogMessage(level = ERROR)
-	@Message(value = "Exception executing batch [%s]", id = 315)
-	void unableToExecuteBatch(String message);
+	@Message(value = "Exception executing batch [%s], SQL: %s", id = 315)
+	void unableToExecuteBatch(Exception e, String sql );
 
 	@LogMessage(level = WARN)
 	@Message(value = "Error executing resolver [%s] : %s", id = 316)
@@ -1300,7 +1304,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unableToUnbindFactoryFromJndi(@Cause JndiException e);
 
 	@Message(value = "Could not update hi value in: %s", id = 375)
-	Object unableToUpdateHiValue(String tableName);
+	String unableToUpdateHiValue(String tableName);
 
 	@LogMessage(level = ERROR)
 	@Message(value = "Could not updateQuery hi value in: %s", id = 376)
@@ -1327,8 +1331,8 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unexpectedRowCounts();
 
 	@LogMessage(level = WARN)
-	@Message(value = "unrecognized bytecode provider [%s], using javassist by default", id = 382)
-	void unknownBytecodeProvider(String providerName);
+	@Message(value = "unrecognized bytecode provider [%s], using [%s] by default", id = 382)
+	void unknownBytecodeProvider(String providerName, String defaultProvider);
 
 	@LogMessage(level = WARN)
 	@Message(value = "Unknown Ingres major version [%s]; using Ingres 9.2 dialect", id = 383)
@@ -1339,8 +1343,8 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unknownOracleVersion(int databaseMajorVersion);
 
 	@LogMessage(level = WARN)
-	@Message(value = "Unknown Microsoft SQL Server major version [%s] using SQL Server 2000 dialect", id = 385)
-	void unknownSqlServerVersion(int databaseMajorVersion);
+	@Message(value = "Unknown Microsoft SQL Server major version [%s] using [%s] dialect", id = 385)
+	void unknownSqlServerVersion(int databaseMajorVersion, Class<? extends Dialect> dialectClass);
 
 	@LogMessage(level = WARN)
 	@Message(value = "ResultSet had no statement associated with it, but was not yet registered", id = 386)
@@ -1428,10 +1432,6 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = INFO)
 	@Message(value = "Using java.io streams to persist binary types", id = 407)
 	void usingStreams();
-
-	@LogMessage(level = INFO)
-	@Message(value = "Using workaround for JVM bug in java.sql.Timestamp", id = 408)
-	void usingTimestampWorkaround();
 
 	@LogMessage(level = WARN)
 	@Message(value = "Using %s which does not generate IETF RFC 4122 compliant UUID values; consider using %s instead",
@@ -1597,7 +1597,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = WARN)
 	@Message(
 			value = "Encountered request for locking however dialect reports that database prefers locking be done in a " +
-					"separate select (follow-on locking); results will be locked afterQuery initial query executes",
+					"separate select (follow-on locking); results will be locked after initial query executes",
 			id = 444
 	)
 	void usingFollowOnLocking();
@@ -1744,4 +1744,42 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = ERROR)
 	@Message(value = "Unsuccessful: %s", id = 478)
 	void unsuccessfulSchemaManagementCommand(String command);
+
+	@Message(
+			value = "Collection [%s] was not processed by flush()."
+			+ " This is likely due to unsafe use of the session (e.g. used in multiple threads concurrently, updates during entity lifecycle hooks).",
+			id = 479
+	)
+	String collectionNotProcessedByFlush(String role);
+
+	@LogMessage(level = WARN)
+	@Message(value = "A ManagedEntity was associated with a stale PersistenceContext. A ManagedEntity may only be associated with one PersistenceContext at a time; %s", id = 480)
+	void stalePersistenceContextInEntityEntry(String msg);
+
+	@LogMessage(level = WARN)
+	@Message(
+			id = 481,
+			value = "Encountered Java type [%s] for which we could not locate a JavaTypeDescriptor and " +
+					"which does not appear to implement equals and/or hashCode.  This can lead to " +
+					"significant performance problems when performing equality/dirty checking involving " +
+					"this Java type.  Consider registering a custom JavaTypeDescriptor or at least " +
+					"implementing equals/hashCode."
+	)
+	void unknownJavaTypeNoEqualsHashCode(Class javaType);
+
+	@LogMessage(level = WARN)
+	@Message(value = "@org.hibernate.annotations.Cache used on a non-root entity: ignored for %s", id = 482)
+	void cacheOrCacheableAnnotationOnNonRoot(String className);
+
+	@LogMessage(level = WARN)
+	@Message(
+			id = 483,
+			value = "An experimental feature has been enabled (" +
+					AvailableSettings.CREATE_EMPTY_COMPOSITES_ENABLED +
+					"=true) that instantiates empty composite/embedded " +
+					"objects when all of its attribute values are null. This feature has known issues and " +
+					"should not be used in production until it is stabilized. See Hibernate Jira " +
+					"issue HHH-11936 for details."
+	)
+	void emptyCompositesEnabled();
 }

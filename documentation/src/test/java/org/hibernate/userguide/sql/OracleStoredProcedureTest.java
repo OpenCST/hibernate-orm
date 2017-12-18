@@ -28,7 +28,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -180,6 +180,20 @@ public class OracleStoredProcedureTest extends BaseEntityManagerFunctionalTestCa
             query.execute();
             List<Object[]> postComments = query.getResultList();
             //end::sql-jpa-call-sp-ref-cursor-oracle-example[]
+            assertNotNull( postComments );
+        });
+    }
+
+    @Test
+    public void testStoredProcedureRefCursorUsingNamedQuery() {
+        doInJPA( this::entityManagerFactory, entityManager -> {
+            //tag::sql-jpa-call-sp-ref-cursor-oracle-named-query-example[]
+            List<Object[]> postComments = entityManager
+            .createNamedStoredProcedureQuery( "sp_person_phones" )
+            .setParameter( "personId", 1L )
+            .getResultList();
+            //end::sql-jpa-call-sp-ref-cursor-oracle-named-query-example[]
+
             assertNotNull( postComments );
         });
     }

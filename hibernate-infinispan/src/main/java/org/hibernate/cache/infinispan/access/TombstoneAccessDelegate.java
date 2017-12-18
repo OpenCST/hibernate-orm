@@ -6,8 +6,6 @@
  */
 package org.hibernate.cache.infinispan.access;
 
-import java.util.concurrent.TimeUnit;
-
 import org.hibernate.cache.CacheException;
 import org.hibernate.cache.infinispan.impl.BaseTransactionalDataRegion;
 import org.hibernate.cache.infinispan.util.Caches;
@@ -40,8 +38,9 @@ public class TombstoneAccessDelegate implements AccessDelegate {
 		this.region = region;
 		this.cache = region.getCache();
 		this.writeCache = Caches.ignoreReturnValuesCache(cache);
-		this.asyncWriteCache = Caches.asyncWriteCache(cache, Flag.IGNORE_RETURN_VALUES);
-		this.putFromLoadCache = writeCache.withFlags( Flag.ZERO_LOCK_ACQUISITION_TIMEOUT, Flag.FAIL_SILENTLY );
+		// Note that correct behaviour of local and async writes depends on LockingInterceptor (see there for details)
+		this.asyncWriteCache = writeCache.withFlags(Flag.FORCE_ASYNCHRONOUS);
+		this.putFromLoadCache = asyncWriteCache.withFlags(Flag.ZERO_LOCK_ACQUISITION_TIMEOUT, Flag.FAIL_SILENTLY);
 		Configuration configuration = cache.getCacheConfiguration();
 		if (configuration.clustering().cacheMode().isInvalidation()) {
 			throw new IllegalArgumentException("For tombstone-based caching, invalidation cache is not allowed.");
@@ -79,7 +78,7 @@ public class TombstoneAccessDelegate implements AccessDelegate {
 	public boolean putFromLoad(SharedSessionContractImplementor session, Object key, Object value, long txTimestamp, Object version, boolean minimalPutOverride) throws CacheException {
 		long lastRegionInvalidation = region.getLastRegionInvalidation();
 		if (txTimestamp < lastRegionInvalidation) {
-			log.tracef("putFromLoad not executed since tx started at %d, beforeQuery last region invalidation finished = %d", txTimestamp, lastRegionInvalidation);
+			log.tracef("putFromLoad not executed since tx started at %d, before last region invalidation finished = %d", txTimestamp, lastRegionInvalidation);
 			return false;
 		}
 		if (minimalPutOverride) {
@@ -88,7 +87,7 @@ public class TombstoneAccessDelegate implements AccessDelegate {
 				Tombstone tombstone = (Tombstone) prev;
 				long lastTimestamp = tombstone.getLastTimestamp();
 				if (txTimestamp <= lastTimestamp) {
-					log.tracef("putFromLoad not executed since tx started at %d, beforeQuery last invalidation finished = %d", txTimestamp, lastTimestamp);
+					log.tracef("putFromLoad not executed since tx started at %d, before last invalidation finished = %d", txTimestamp, lastTimestamp);
 					return false;
 				}
 			}
@@ -115,21 +114,20 @@ public class TombstoneAccessDelegate implements AccessDelegate {
 		return true;
 	}
 
-	protected void write(SharedSessionContractImplementor session, Object key, Object value) {
-		TransactionCoordinator tc = session.getTransactionCoordinator();
-		FutureUpdateSynchronization sync = new FutureUpdateSynchronization(tc, writeCache, requiresTransaction, key, value);
-		// FutureUpdate is handled in TombstoneCallInterceptor
-		writeCache.put(key, new FutureUpdate(sync.getUuid(), null), region.getTombstoneExpiration(), TimeUnit.MILLISECONDS);
-		tc.getLocalSynchronizations().registerSynchronization(sync);
-	}
-
 	@Override
 	public void remove(SharedSessionContractImplementor session, Object key) throws CacheException {
-		TransactionCoordinator transactionCoordinator = session.getTransactionCoordinator();
-		TombstoneSynchronization sync = new TombstoneSynchronization(transactionCoordinator, asyncWriteCache, requiresTransaction, region, key);
-		Tombstone tombstone = new Tombstone(sync.getUuid(), session.getTimestamp() + region.getTombstoneExpiration(), false);
-		writeCache.put(key, tombstone, region.getTombstoneExpiration(), TimeUnit.MILLISECONDS);
-		transactionCoordinator.getLocalSynchronizations().registerSynchronization(sync);
+		write(session, key, null);
+	}
+
+	protected void write(SharedSessionContractImplementor session, Object key, Object value) {
+		TransactionCoordinator tc = session.getTransactionCoordinator();
+		FutureUpdateSynchronization sync = new FutureUpdateSynchronization(tc, asyncWriteCache, requiresTransaction, key, value, region, session.getTimestamp());
+		// The update will be invalidating all putFromLoads for the duration of expiration or until removed by the synchronization
+		Tombstone tombstone = new Tombstone(sync.getUuid(), region.nextTimestamp() + region.getTombstoneExpiration());
+		// The outcome of this operation is actually defined in TombstoneCallInterceptor
+		// Metadata in PKVC are cleared and set in the interceptor, too
+		writeCache.put(key, tombstone);
+		tc.getLocalSynchronizations().registerSynchronization(sync);
 	}
 
 	@Override
@@ -145,7 +143,7 @@ public class TombstoneAccessDelegate implements AccessDelegate {
 
 	@Override
 	public void evict(Object key) throws CacheException {
-		writeCache.put(key, TombstoneUpdate.EVICT);
+		writeCache.put(key, new TombstoneUpdate<>(region.nextTimestamp(), null));
 	}
 
 	@Override

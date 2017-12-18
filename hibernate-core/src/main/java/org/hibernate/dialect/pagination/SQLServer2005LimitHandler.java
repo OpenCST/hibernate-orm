@@ -8,6 +8,7 @@ package org.hibernate.dialect.pagination;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -27,14 +28,19 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	private static final String FROM = "from";
 	private static final String DISTINCT = "distinct";
 	private static final String ORDER_BY = "order by";
+	private static final String SELECT_DISTINCT = SELECT + " " + DISTINCT;
+	private static final String SELECT_DISTINCT_SPACE = SELECT_DISTINCT + " ";
 
-	private static final Pattern SELECT_PATTERN = buildShallowIndexPattern( SELECT + "(.)*" );
-	private static final Pattern FROM_PATTERN = buildShallowIndexPattern( FROM );
-	private static final Pattern DISTINCT_PATTERN = buildShallowIndexPattern( DISTINCT );
-	private static final Pattern ORDER_BY_PATTERN = buildShallowIndexPattern( ORDER_BY );
-	private static final Pattern COMMA_PATTERN = buildShallowIndexPattern( "," );
+	final String SELECT_SPACE = "select ";
 
-	private static final Pattern ALIAS_PATTERN = Pattern.compile( "(?i)\\sas\\s(.)+$" );
+	private static final Pattern SELECT_DISTINCT_PATTERN = buildShallowIndexPattern( SELECT_DISTINCT_SPACE, true );
+	private static final Pattern SELECT_PATTERN = buildShallowIndexPattern( SELECT + "(.*)", true );
+	private static final Pattern FROM_PATTERN = buildShallowIndexPattern( FROM, true );
+	private static final Pattern DISTINCT_PATTERN = buildShallowIndexPattern( DISTINCT, true );
+	private static final Pattern ORDER_BY_PATTERN = buildShallowIndexPattern( ORDER_BY, true );
+	private static final Pattern COMMA_PATTERN = buildShallowIndexPattern( ",", false );
+	private static final Pattern ALIAS_PATTERN =
+			Pattern.compile( "(?![^\\[]*(\\]))\\S+\\s*(\\s(?i)as\\s)\\s*(\\S+)*\\s*$|(?![^\\[]*(\\]))\\s+(\\S+)$" );
 
 	// Flag indicating whether TOP(?) expression has been added to the original query.
 	private boolean topAdded;
@@ -146,7 +152,7 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	protected String fillAliasInSelectClause(StringBuilder sb) {
 		final String separator = System.lineSeparator();
 		final List<String> aliases = new LinkedList<String>();
-		final int startPos = shallowIndexOfPattern( sb, SELECT_PATTERN, 0 );
+		final int startPos = getSelectColumnsStartPosition( sb );
 		int endPos = shallowIndexOfPattern( sb, FROM_PATTERN, startPos );
 
 		int nextComa = startPos;
@@ -204,6 +210,35 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	}
 
 	/**
+	 * Get the start position for where the column list begins.
+	 *
+	 * @param sb the string builder sql.
+	 * @return the start position where the column list begins.
+	 */
+	private int getSelectColumnsStartPosition(StringBuilder sb) {
+		final int startPos = getSelectStartPosition( sb );
+		// adjustment for 'select distinct ' and 'select '.
+		final String sql = sb.toString().substring( startPos ).toLowerCase();
+		if ( sql.startsWith( SELECT_DISTINCT_SPACE ) ) {
+			return ( startPos + SELECT_DISTINCT_SPACE.length() );
+		}
+		else if ( sql.startsWith( SELECT_SPACE ) ) {
+			return ( startPos + SELECT_SPACE.length() );
+		}
+		return startPos;
+	}
+
+	/**
+	 * Get the select start position.
+	 *
+	 * @param sb the string builder sql.
+	 * @return the position where {@code select} is found.
+	 */
+	private int getSelectStartPosition(StringBuilder sb) {
+		return shallowIndexOfPattern( sb, SELECT_PATTERN, 0 );
+	}
+
+	/**
 	 * @param expression Select expression.
 	 *
 	 * @return {@code true} when expression selects multiple columns, {@code false} otherwise.
@@ -222,13 +257,27 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	 * @return Column alias.
 	 */
 	private String getAlias(String expression) {
+		// remove any function arguments, if any exist.
+		// 'cast(tab1.col1 as varchar(255)) as col1' -> 'cast as col1'
+		// 'cast(tab1.col1 as varchar(255)) col1 -> 'cast col1'
+		// 'cast(tab1.col1 as varchar(255))' -> 'cast'
+		expression = expression.replaceFirst( "(\\((.)*\\))", "" ).trim();
+
+		// This will match any text provided with:
+		// 		columnName [[as] alias]
 		final Matcher matcher = ALIAS_PATTERN.matcher( expression );
-		if ( matcher.find() ) {
-			// Taking advantage of Java regular expressions greedy behavior while extracting the last AS keyword.
-			// Note that AS keyword can appear in CAST operator, e.g. 'cast(tab1.col1 as varchar(255)) as col1'.
-			return matcher.group( 0 ).replaceFirst( "(?i)(.)*\\sas\\s", "" ).trim();
+
+		String alias = null;
+		if ( matcher.find() && matcher.groupCount() > 1 ) {
+			// default to the alias after 'as' if detected
+			alias = matcher.group( 3 );
+			if ( alias == null ) {
+				// use the clause which has on proceeding 'as' fragment.
+				alias = matcher.group( 0 );
+			}
 		}
-		return null;
+
+		return ( alias != null ? alias.trim() : null );
 	}
 
 	/**
@@ -248,15 +297,16 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	 * @param sql SQL query.
 	 */
 	protected void addTopExpression(StringBuilder sql) {
-		final int distinctStartPos = shallowIndexOfPattern( sql, DISTINCT_PATTERN, 0 );
-		if ( distinctStartPos > 0 ) {
-			// Place TOP after DISTINCT.
-			sql.insert( distinctStartPos + DISTINCT.length(), " TOP(?)" );
+		// We should use either of these which come first (SELECT or SELECT DISTINCT).
+		final int selectPos = shallowIndexOfPattern( sql, SELECT_PATTERN, 0 );
+		final int selectDistinctPos = shallowIndexOfPattern( sql, SELECT_DISTINCT_PATTERN, 0 );
+		if ( selectPos == selectDistinctPos ) {
+			// Place TOP after SELECT DISTINCT
+			sql.insert( selectDistinctPos + SELECT_DISTINCT.length(), " TOP(?)" );
 		}
 		else {
-			final int selectStartPos = shallowIndexOfPattern( sql, SELECT_PATTERN, 0 );
-			// Place TOP after SELECT.
-			sql.insert( selectStartPos + SELECT.length(), " TOP(?)" );
+			// Place TOP after SELECT
+			sql.insert( selectPos + SELECT.length(), " TOP(?)" );
 		}
 		topAdded = true;
 	}
@@ -280,11 +330,28 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 			return -1;
 		}
 
+		List<IgnoreRange> ignoreRangeList = generateIgnoreRanges( matchString );
+
 		Matcher matcher = pattern.matcher( matchString );
 		matcher.region( fromIndex, matchString.length() );
 
-		if ( matcher.find() && matcher.groupCount() > 0 ) {
-			index = matcher.start();
+		if ( ignoreRangeList.isEmpty() ) {
+			// old behavior where the first match is used if no ignorable ranges
+			// were deduced from the matchString.
+			if ( matcher.find() && matcher.groupCount() > 0 ) {
+				index = matcher.start();
+			}
+		}
+		else {
+			// rather than taking the first match, we now iterate all matches
+			// until we determine a match that isn't considered "ignorable'.
+			while ( matcher.find() && matcher.groupCount() > 0 ) {
+				final int position = matcher.start();
+				if ( !isPositionIgnorable( ignoreRangeList, position ) ) {
+					index = position;
+					break;
+				}
+			}
 		}
 		return index;
 	}
@@ -294,9 +361,92 @@ public class SQLServer2005LimitHandler extends AbstractLimitHandler {
 	 * based on the search pattern that is not enclosed in parenthesis.
 	 *
 	 * @param pattern String search pattern.
+	 * @param wordBoundary whether to apply a word boundary restriction.
 	 * @return Compiled {@link Pattern}.
 	 */
-	private static Pattern buildShallowIndexPattern(String pattern) {
-		return Pattern.compile( "(\\b" + pattern + ")(?![^\\(]*\\))", Pattern.CASE_INSENSITIVE );
+	private static Pattern buildShallowIndexPattern(String pattern, boolean wordBoundary) {
+		return Pattern.compile(
+				"(" +
+				( wordBoundary ? "\\b" : "" ) +
+				pattern +
+				( wordBoundary ? "\\b" : "" ) +
+				")(?![^\\(|\\[]*(\\)|\\]))",
+				Pattern.CASE_INSENSITIVE
+		);
+	}
+
+	/**
+	 * Geneartes a list of {@code IgnoreRange} objects that represent nested sections of the
+	 * provided SQL buffer that should be ignored when performing regular expression matches.
+	 *
+	 * @param sql The SQL buffer.
+	 * @return list of {@code IgnoreRange} objects, never {@code null}.
+	 */
+	private static List<IgnoreRange> generateIgnoreRanges(String sql) {
+		List<IgnoreRange> ignoreRangeList = new ArrayList<IgnoreRange>();
+
+		int depth = 0;
+		int start = -1;
+		boolean insideAStringValue = false;
+		for ( int i = 0; i < sql.length(); ++i ) {
+			final char ch = sql.charAt( i );
+			if ( ch == '\'' ) {
+				insideAStringValue = !insideAStringValue;
+			}
+			else if ( ch == '(' && !insideAStringValue ) {
+				depth++;
+				if ( depth == 1 ) {
+					start = i;
+				}
+			}
+			else if ( ch == ')' && !insideAStringValue ) {
+				if ( depth > 0 ) {
+					if ( depth == 1 ) {
+						ignoreRangeList.add( new IgnoreRange( start, i ) );
+						start = -1;
+					}
+					depth--;
+				}
+				else {
+					throw new IllegalStateException( "Found an unmatched ')' at position " + i + ": " + sql );
+				}
+			}
+		}
+
+		if ( depth != 0 ) {
+			throw new IllegalStateException( "Unmatched parenthesis in rendered SQL (" + depth + " depth): " + sql );
+		}
+
+		return ignoreRangeList;
+	}
+
+	/**
+	 * Returns whether the specified {@code position} is within the ranges of the {@code ignoreRangeList}.
+	 *
+	 * @param ignoreRangeList list of {@code IgnoreRange} objects deduced from the SQL buffer.
+	 * @param position the position to determine whether is ignorable.
+	 * @return {@code true} if the position is to ignored/skipped, {@code false} otherwise.
+	 */
+	private static boolean isPositionIgnorable(List<IgnoreRange> ignoreRangeList, int position) {
+		for ( IgnoreRange ignoreRange : ignoreRangeList ) {
+			if ( ignoreRange.isWithinRange( position ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static class IgnoreRange {
+		private int start;
+		private int end;
+
+		IgnoreRange(int start, int end) {
+			this.start = start;
+			this.end = end;
+		}
+
+		boolean isWithinRange(int position) {
+			return position >= start && position <= end;
+		}
 	}
 }

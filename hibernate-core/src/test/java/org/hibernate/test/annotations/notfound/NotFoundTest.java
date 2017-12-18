@@ -6,46 +6,124 @@
  */
 package org.hibernate.test.annotations.notfound;
 
+import java.io.Serializable;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.ManyToOne;
+
+import org.hibernate.annotations.NotFound;
+import org.hibernate.annotations.NotFoundAction;
+
+import org.hibernate.testing.DialectChecks;
+import org.hibernate.testing.RequiresDialectFeature;
+import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
 import org.junit.Test;
 
-import org.hibernate.Session;
-import org.hibernate.Transaction;
-import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
-
+import static org.hibernate.testing.transaction.TransactionUtil.doInHibernate;
 import static org.junit.Assert.assertNull;
 
 /**
  * @author Emmanuel Bernard
  */
+@RequiresDialectFeature(value = DialectChecks.SupportsIdentityColumns.class)
 public class NotFoundTest extends BaseCoreFunctionalTestCase {
+
 	@Test
 	public void testManyToOne() throws Exception {
-		Currency euro = new Currency();
+		final Currency euro = new Currency();
 		euro.setName( "Euro" );
-		Coin fiveC = new Coin();
-		fiveC.setName( "Five cents" );
-		fiveC.setCurrency( euro );
-		Session s = openSession();
-		s.getTransaction().begin();
-		s.persist( euro );
-		s.persist( fiveC );
-		s.getTransaction().commit();
-		s.clear();
-		Transaction tx = s.beginTransaction();
-		euro = (Currency) s.get( Currency.class, euro.getId() );
-		s.delete( euro );
-		tx.commit();
-		s.clear();
-		tx = s.beginTransaction();
-		fiveC = (Coin) s.get( Coin.class, fiveC.getId() );
-		assertNull( fiveC.getCurrency() );
-		s.delete( fiveC );
-		tx.commit();
-		s.close();
+
+		final Coin fiveCents = new Coin();
+		fiveCents.setName( "Five cents" );
+		fiveCents.setCurrency( euro );
+
+		doInHibernate( this::sessionFactory, session -> {
+			session.persist( euro );
+			session.persist( fiveCents );
+		} );
+
+		doInHibernate( this::sessionFactory, session -> {
+			Currency _euro = session.get( Currency.class, euro.getId() );
+			session.delete( _euro );
+		} );
+
+		doInHibernate( this::sessionFactory, session -> {
+			Coin _fiveCents = session.get( Coin.class, fiveCents.getId() );
+			assertNull( _fiveCents.getCurrency() );
+			session.delete( _fiveCents );
+		} );
 	}
 
 	@Override
 	protected Class[] getAnnotatedClasses() {
-		return new Class[] { Coin.class, Currency.class };
+		return new Class[] {Coin.class, Currency.class};
 	}
+
+	@Entity(name = "Coin")
+	public static class Coin {
+
+		private Integer id;
+
+		private String name;
+
+		private Currency currency;
+
+		@Id
+		@GeneratedValue
+		public Integer getId() {
+			return id;
+		}
+
+		public void setId(Integer id) {
+			this.id = id;
+		}
+
+		public String getName() {
+			return name;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+
+		@ManyToOne
+		@JoinColumn(name = "currency", referencedColumnName = "name")
+		@NotFound(action = NotFoundAction.IGNORE)
+		public Currency getCurrency() {
+			return currency;
+		}
+
+		public void setCurrency(Currency currency) {
+			this.currency = currency;
+		}
+	}
+
+	@Entity(name = "Currency")
+	public static class Currency implements Serializable {
+
+		private Integer id;
+
+		private String name;
+
+		@Id
+		@GeneratedValue
+		public Integer getId() {
+			return id;
+		}
+
+		public void setId(Integer id) {
+			this.id = id;
+		}
+
+		public String getName() {
+			return name;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+	}
+
 }

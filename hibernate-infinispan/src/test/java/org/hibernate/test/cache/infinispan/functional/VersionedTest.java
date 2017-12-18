@@ -20,7 +20,6 @@ import org.hibernate.StaleStateException;
 import org.hibernate.cache.infinispan.impl.BaseTransactionalDataRegion;
 import org.hibernate.cache.infinispan.util.Caches;
 import org.hibernate.cache.infinispan.util.VersionedEntry;
-import org.hibernate.cache.spi.entry.CacheEntry;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 
 import org.hibernate.test.cache.infinispan.functional.entities.Item;
@@ -45,7 +44,7 @@ import static org.junit.Assert.assertTrue;
  * Tests specific to versioned entries -based caches.
  * Similar to {@link TombstoneTest} but some cases have been removed since
  * we are modifying the cache only once, therefore some sequences of operations
- * would fail beforeQuery touching the cache.
+ * would fail before touching the cache.
  *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
@@ -221,11 +220,7 @@ public class VersionedTest extends AbstractNonInvalidationTest {
    public void testEvictUpdateExpiration() throws Exception {
       // since the timestamp for update is based on session open/tx begin time, we have to do this sequentially
       sessionFactory().getCache().evictEntity(Item.class, itemId);
-
-      Map contents = Caches.entrySet(entityCache).toMap();
-      assertEquals(1, contents.size());
-      assertEquals(VersionedEntry.class, contents.get(itemId).getClass());
-
+      assertSingleEmpty();
       TIME_SERVICE.advance(1);
 
       withTxSession(s -> {
@@ -236,6 +231,22 @@ public class VersionedTest extends AbstractNonInvalidationTest {
 
       assertSingleCacheEntry();
       TIME_SERVICE.advance(timeout + 1);
+      assertSingleCacheEntry();
+   }
+
+   @Test
+   public void testEvictAndPutFromLoad() throws Exception {
+      sessionFactory().getCache().evictEntity(Item.class, itemId);
+      assertSingleEmpty();
+      TIME_SERVICE.advance(1);
+
+      withTxSession(s -> {
+         Item item = s.load(Item.class, itemId);
+         assertEquals("Original item", item.getDescription());
+      });
+
+      assertSingleCacheEntry();
+      TIME_SERVICE.advance(TIMEOUT + 1);
       assertSingleCacheEntry();
    }
 
@@ -338,19 +349,5 @@ public class VersionedTest extends AbstractNonInvalidationTest {
       value = contents.get(itemId);
       assertEquals(VersionedEntry.class, value.getClass());
       assertNull(((VersionedEntry) value).getValue());
-   }
-
-   protected void assertEmptyCache() {
-      assertNull(entityCache.get(itemId)); // force expiration
-      Map contents = Caches.entrySet(entityCache).toMap();
-      assertEquals(Collections.EMPTY_MAP, contents);
-   }
-
-   protected Object assertSingleCacheEntry() {
-      Map contents = Caches.entrySet(entityCache).toMap();
-      assertEquals(1, contents.size());
-      Object value = contents.get(itemId);
-      assertTrue(contents.toString(), value instanceof CacheEntry);
-      return value;
    }
 }

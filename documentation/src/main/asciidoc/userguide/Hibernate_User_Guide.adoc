@@ -1,7 +1,8 @@
-= Hibernate ORM {majorMinorVersion} User Guide
-Steve Ebersole, Vlad Mihalcea, Andrea Boriero, Brett Meyer, Radim Vansa
-:toc:
+= Hibernate ORM {fullVersion} User Guide
+Vlad Mihalcea, Steve Ebersole, Andrea Boriero, Gunnar Morling, Gail Badner, Chris Cranford, Emmanuel Bernard, Sanne Grinovero, Brett Meyer, Hardy Ferentschik, Gavin King, Christian Bauer, Max Rydahl Andersen, Karel Maesen, Radim Vansa, Louis Jacomet
+:toc2:
 :toclevels: 3
+:sectanchors:
 
 include::Preface.adoc[]
 
@@ -10,6 +11,7 @@ include::Preface.adoc[]
 include::chapters/architecture/Architecture.adoc[]
 include::chapters/domain/DomainModel.adoc[]
 include::chapters/bootstrap/Bootstrap.adoc[]
+include::chapters/schema/Schema.adoc[]
 include::chapters/pc/PersistenceContext.adoc[]
 include::chapters/flushing/Flushing.adoc[]
 include::chapters/jdbc/Database_Access.adoc[]
@@ -30,6 +32,8 @@ include::chapters/envers/Envers.adoc[]
 include::chapters/portability/Portability.adoc[]
 
 include::appendices/Configurations.adoc[]
+include::appendices/Annotations.adoc[]
+include::appendices/BestPractices.adoc[]
 include::appendices/Legacy_Bootstrap.adoc[]
 include::appendices/Legacy_DomainModel.adoc[]
 include::appendices/Legacy_Criteria.adoc[]

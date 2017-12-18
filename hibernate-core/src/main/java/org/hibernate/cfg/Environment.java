@@ -8,7 +8,6 @@ package org.hibernate.cfg;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -112,7 +111,7 @@ import org.jboss.logging.Logger;
  * <tr>
  *   <td><tt>hibernate.jdbc.use_getGeneratedKeys</tt></td>
  *   <td>enable use of JDBC3 PreparedStatement.getGeneratedKeys() to retrieve
- *   natively generated keys afterQuery insert. Requires JDBC3+ driver and JRE1.4+</td>
+ *   natively generated keys after insert. Requires JDBC3+ driver and JRE1.4+</td>
  * </tr>
  * <tr>
  *   <td><tt>hibernate.hbm2ddl.auto</tt></td>
@@ -151,12 +150,11 @@ import org.jboss.logging.Logger;
  * @author Gavin King
  */
 public final class Environment implements AvailableSettings {
-	private static final CoreMessageLogger LOG = Logger.getMessageLogger(CoreMessageLogger.class, Environment.class.getName());
+	private static final CoreMessageLogger LOG = Logger.getMessageLogger( CoreMessageLogger.class, Environment.class.getName());
 
 	private static final BytecodeProvider BYTECODE_PROVIDER_INSTANCE;
 	private static final boolean ENABLE_BINARY_STREAMS;
 	private static final boolean ENABLE_REFLECTION_OPTIMIZER;
-	private static final boolean JVM_HAS_TIMESTAMP_BUG;
 
 	private static final Properties GLOBAL_PROPERTIES;
 
@@ -238,29 +236,10 @@ public final class Environment implements AvailableSettings {
 		}
 
 		BYTECODE_PROVIDER_INSTANCE = buildBytecodeProvider( GLOBAL_PROPERTIES );
-
-		long x = 123456789;
-		JVM_HAS_TIMESTAMP_BUG = new Timestamp(x).getTime() != x;
-		if ( JVM_HAS_TIMESTAMP_BUG ) {
-			LOG.usingTimestampWorkaround();
-		}
 	}
 
 	public static BytecodeProvider getBytecodeProvider() {
 		return BYTECODE_PROVIDER_INSTANCE;
-	}
-
-	/**
-	 * Does this JVM's implementation of {@link java.sql.Timestamp} have a bug in which the following is true:<code>
-	 * new java.sql.Timestamp( x ).getTime() != x
-	 * </code>
-	 * <p/>
-	 * NOTE : IBM JDK 1.3.1 the only known JVM to exhibit this behavior.
-	 *
-	 * @return True if the JVM's {@link Timestamp} implementa
-	 */
-	public static boolean jvmHasTimestampBug() {
-		return JVM_HAS_TIMESTAMP_BUG;
 	}
 
 	/**
@@ -313,18 +292,31 @@ public final class Environment implements AvailableSettings {
 		return ConnectionProviderInitiator.toIsolationNiceName( isolation );
 	}
 
+
+	public static final String BYTECODE_PROVIDER_NAME_JAVASSIST = "javassist";
+	public static final String BYTECODE_PROVIDER_NAME_BYTEBUDDY = "bytebuddy";
+	public static final String BYTECODE_PROVIDER_NAME_DEFAULT = BYTECODE_PROVIDER_NAME_JAVASSIST;
+
 	public static BytecodeProvider buildBytecodeProvider(Properties properties) {
-		String provider = ConfigurationHelper.getString( BYTECODE_PROVIDER, properties, "javassist" );
-		LOG.bytecodeProvider( provider );
+		String provider = ConfigurationHelper.getString( BYTECODE_PROVIDER, properties, BYTECODE_PROVIDER_NAME_DEFAULT );
 		return buildBytecodeProvider( provider );
 	}
 
 	private static BytecodeProvider buildBytecodeProvider(String providerName) {
-		if ( "javassist".equals( providerName ) ) {
+		if ( BYTECODE_PROVIDER_NAME_BYTEBUDDY.equals( providerName ) ) {
+			return new org.hibernate.bytecode.internal.bytebuddy.BytecodeProviderImpl();
+		}
+
+		if ( BYTECODE_PROVIDER_NAME_JAVASSIST.equals( providerName ) ) {
 			return new org.hibernate.bytecode.internal.javassist.BytecodeProviderImpl();
 		}
 
-		LOG.unknownBytecodeProvider( providerName );
+		LOG.bytecodeProvider( providerName );
+
+		// todo : allow a custom class name - just check if the config is a FQN
+		//		currently we assume it is only ever the Strings "javassist" or "bytebuddy"...
+
+		LOG.unknownBytecodeProvider( providerName, BYTECODE_PROVIDER_NAME_DEFAULT );
 		return new org.hibernate.bytecode.internal.javassist.BytecodeProviderImpl();
 	}
 }

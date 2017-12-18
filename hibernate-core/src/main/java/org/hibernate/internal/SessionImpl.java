@@ -63,7 +63,6 @@ import org.hibernate.ObjectNotFoundException;
 import org.hibernate.QueryException;
 import org.hibernate.ReplicationMode;
 import org.hibernate.ScrollMode;
-import org.hibernate.ScrollableResults;
 import org.hibernate.Session;
 import org.hibernate.SessionEventListener;
 import org.hibernate.SessionException;
@@ -97,6 +96,7 @@ import org.hibernate.engine.spi.SessionImplementor;
 import org.hibernate.engine.spi.SessionOwner;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.engine.spi.Status;
+import org.hibernate.engine.spi.TypedValue;
 import org.hibernate.engine.transaction.spi.TransactionImplementor;
 import org.hibernate.engine.transaction.spi.TransactionObserver;
 import org.hibernate.event.service.spi.EventListenerGroup;
@@ -154,6 +154,7 @@ import org.hibernate.loader.criteria.CriteriaLoader;
 import org.hibernate.loader.custom.CustomLoader;
 import org.hibernate.loader.custom.CustomQuery;
 import org.hibernate.metamodel.spi.MetamodelImplementor;
+import org.hibernate.param.CollectionFilterKeyParameterSpecification;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.persister.entity.MultiLoadOptions;
@@ -180,6 +181,7 @@ import org.hibernate.resource.transaction.spi.TransactionCoordinator;
 import org.hibernate.resource.transaction.spi.TransactionStatus;
 import org.hibernate.stat.SessionStatistics;
 import org.hibernate.stat.internal.SessionStatisticsImpl;
+import org.hibernate.type.Type;
 
 import static org.hibernate.cfg.AvailableSettings.JPA_LOCK_SCOPE;
 import static org.hibernate.cfg.AvailableSettings.JPA_LOCK_TIMEOUT;
@@ -231,16 +233,23 @@ public final class SessionImpl
 	// todo : (5.2) HEM always initialized this.  Is that really needed?
 	private LockOptions lockOptions = new LockOptions();
 
-	private transient boolean autoClear;
-	private transient boolean autoClose;
+	private boolean autoClear;
+	private boolean autoClose;
+	private boolean queryParametersValidationEnabled;
 
 	private transient int dontFlushFromFind;
 
+	private transient boolean disallowOutOfTransactionUpdateOperations;
 	private transient ExceptionMapper exceptionMapper;
 	private transient ManagedFlushChecker managedFlushChecker;
+
 	private transient AfterCompletionAction afterCompletionAction;
 
 	private transient LoadEvent loadEvent; //cached LoadEvent instance
+
+	private transient boolean discardOnClose;
+
+	private transient TransactionObserver transactionObserver;
 
 	public SessionImpl(SessionFactoryImpl factory, SessionCreationOptions options) {
 		super( factory, options );
@@ -253,6 +262,9 @@ public final class SessionImpl
 
 		this.autoClear = options.shouldAutoClear();
 		this.autoClose = options.shouldAutoClose();
+		this.queryParametersValidationEnabled = options.isQueryParametersValidationEnabled();
+		this.disallowOutOfTransactionUpdateOperations = !factory.getSessionFactoryOptions().isAllowOutOfTransactionUpdateOperations();
+		this.discardOnClose = getFactory().getSessionFactoryOptions().isReleaseResourcesOnCloseEnabled();
 
 		if ( options instanceof SharedSessionCreationOptions && ( (SharedSessionCreationOptions) options ).isTransactionCoordinatorShared() ) {
 			final SharedSessionCreationOptions sharedOptions = (SharedSessionCreationOptions) options;
@@ -301,6 +313,7 @@ public final class SessionImpl
 
 	private void applyEntityManagerSpecificProperties() {
 		for ( String key : ENTITY_MANAGER_SPECIFIC_PROPERTIES ) {
+			final Map<String, Object> properties = getFactory().getProperties();
 			if ( getFactory().getProperties().containsKey( key ) ) {
 				this.properties.put( key, getFactory().getProperties().get( key ) );
 			}
@@ -397,28 +410,34 @@ public final class SessionImpl
 
 		// todo : we want this check if usage is JPA, but not native Hibernate usage
 		if ( getSessionFactory().getSessionFactoryOptions().isJpaBootstrap() ) {
-			checkOpen();
+			// Original hibernate-entitymanager EM#close behavior
+			checkSessionFactoryOpen();
+			checkOpenOrWaitingForAutoClose();
+			if ( discardOnClose || !isTransactionInProgress( false ) ) {
+				super.close();
+			}
+			else {
+				//Otherwise, session auto-close will be enabled by shouldAutoCloseSession().
+				waitingForAutoClose = true;
+				closed = true;
+			}
 		}
-
-		super.close();
+		else {
+			super.close();
+		}
 
 		if ( getFactory().getStatistics().isStatisticsEnabled() ) {
 			getFactory().getStatistics().closeSession();
 		}
+	}
 
-// Original hibernate-entitymanager EM#close behavior
-// does any of this need to be integrated?
-//		checkSessionFactoryOpen();
-//		checkOpen();
-//
-//		if ( discardOnClose || !isTransactionInProgress() ) {
-//			//close right now
-//			if ( session != null ) {
-//				session.close();
-//			}
-//		}
-//		// Otherwise, session auto-close will be enabled by shouldAutoCloseSession().
-//		open = false;
+	private boolean isTransactionInProgress(boolean isMarkedRollbackConsideredActive) {
+		if ( waitingForAutoClose ) {
+			return getSessionFactory().isOpen() &&
+					getTransactionCoordinator().isTransactionActive( isMarkedRollbackConsideredActive );
+		}
+		return !isClosed() &&
+				getTransactionCoordinator().isTransactionActive( isMarkedRollbackConsideredActive );
 	}
 
 	@Override
@@ -429,7 +448,7 @@ public final class SessionImpl
 
 		if ( getActionQueue().hasBeforeTransactionActions() || getActionQueue().hasAfterTransactionActions() ) {
 			log.warn(
-					"On close, shared Session had beforeQuery/afterQuery transaction actions that have not yet been processed"
+					"On close, shared Session had before/after transaction actions that have not yet been processed"
 			);
 		}
 		return false;
@@ -438,6 +457,11 @@ public final class SessionImpl
 	@Override
 	public boolean isAutoCloseSessionEnabled() {
 		return autoClose;
+	}
+
+	@Override
+	public boolean isQueryParametersValidationEnabled() {
+		return queryParametersValidationEnabled;
 	}
 
 	@Override
@@ -464,17 +488,20 @@ public final class SessionImpl
 	}
 
 	private void managedFlush() {
-		if ( isClosed() ) {
+		if ( isClosed() && !waitingForAutoClose ) {
 			log.trace( "Skipping auto-flush due to session closed" );
 			return;
 		}
 		log.trace( "Automatically flushing session" );
-		flush();
+		doFlush();
 	}
 
 	@Override
 	public boolean shouldAutoClose() {
-		if ( isClosed() ) {
+		if ( waitingForAutoClose ) {
+			return true;
+		}
+		else if ( isClosed() ) {
 			return false;
 		}
 		else if ( sessionOwner != null ) {
@@ -495,7 +522,7 @@ public final class SessionImpl
 
 	@Override
 	public Connection connection() throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		return getJdbcCoordinator().getLogicalConnection().getPhysicalConnection();
 	}
 
@@ -516,14 +543,14 @@ public final class SessionImpl
 
 	@Override
 	public void setAutoClear(boolean enabled) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		autoClear = enabled;
 	}
 
 	/**
 	 * Check if there is a Hibernate or JTA transaction in progress and,
 	 * if there is not, flush if necessary, make sure the connection has
-	 * been committed (if it is not in autocommit mode) and run the afterQuery
+	 * been committed (if it is not in autocommit mode) and run the after
 	 * completion processing
 	 *
 	 * @param success Was the operation a success
@@ -579,7 +606,7 @@ public final class SessionImpl
 
 	@Override
 	public Object getEntityUsingInterceptor(EntityKey key) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		// todo : should this get moved to PersistentContext?
 		// logically, is PersistentContext the "thing" to which an interceptor gets attached?
 		final Object result = persistenceContext.getEntity( key );
@@ -597,7 +624,7 @@ public final class SessionImpl
 
 	private void checkNoUnresolvedActionsBeforeOperation() {
 		if ( persistenceContext.getCascadeLevel() == 0 && actionQueue.hasUnresolvedEntityInsertActions() ) {
-			throw new IllegalStateException( "There are delayed insert actions beforeQuery operation as cascade level 0." );
+			throw new IllegalStateException( "There are delayed insert actions before operation as cascade level 0." );
 		}
 	}
 
@@ -733,21 +760,23 @@ public final class SessionImpl
 
 	@Override
 	public void persist(String entityName, Object object) throws HibernateException {
+		checkOpen();
 		firePersist( new PersistEvent( entityName, object, this ) );
 	}
 
 	@Override
 	public void persist(Object object) throws HibernateException {
-		persist( null, object );
+		checkOpen();
+		firePersist( new PersistEvent( null, object, this ) );
 	}
 
 	@Override
 	public void persist(String entityName, Object object, Map copiedAlready) throws HibernateException {
+		checkOpenOrWaitingForAutoClose();
 		firePersist( copiedAlready, new PersistEvent( entityName, object, this ) );
 	}
 
 	private void firePersist(PersistEvent event) {
-		checkOpen();
 		try {
 			checkTransactionSynchStatus();
 			checkNoUnresolvedActionsBeforeOperation();
@@ -773,7 +802,6 @@ public final class SessionImpl
 	}
 
 	private void firePersist(Map copiedAlready, PersistEvent event) {
-		checkOpen();
 		checkTransactionSynchStatus();
 
 		try {
@@ -811,7 +839,7 @@ public final class SessionImpl
 	}
 
 	private void firePersistOnFlush(Map copiedAlready, PersistEvent event) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		for ( PersistEventListener listener : listeners( EventType.PERSIST_ONFLUSH ) ) {
 			listener.onPersist( event, copiedAlready );
@@ -834,21 +862,23 @@ public final class SessionImpl
 
 	@Override
 	public Object merge(String entityName, Object object) throws HibernateException {
+		checkOpen();
 		return fireMerge( new MergeEvent( entityName, object, this ) );
 	}
 
 	@Override
 	public Object merge(Object object) throws HibernateException {
-		return merge( null, object );
+		checkOpen();
+		return fireMerge( new MergeEvent( null, object, this ));
 	}
 
 	@Override
 	public void merge(String entityName, Object object, Map copiedAlready) throws HibernateException {
+		checkOpenOrWaitingForAutoClose();
 		fireMerge( copiedAlready, new MergeEvent( entityName, object, this ) );
 	}
 
 	private Object fireMerge(MergeEvent event) {
-		checkOpen();
 		try {
 			checkTransactionSynchStatus();
 			checkNoUnresolvedActionsBeforeOperation();
@@ -872,8 +902,6 @@ public final class SessionImpl
 	}
 
 	private void fireMerge(Map copiedAlready, MergeEvent event) {
-		checkOpen();
-
 		try {
 			checkTransactionSynchStatus();
 			for ( MergeEventListener listener : listeners( EventType.MERGE ) ) {
@@ -900,19 +928,22 @@ public final class SessionImpl
 
 	@Override
 	public void delete(Object object) throws HibernateException {
+		checkOpen();
 		fireDelete( new DeleteEvent( object, this ) );
 	}
 
 	@Override
 	public void delete(String entityName, Object object) throws HibernateException {
+		checkOpen();
 		fireDelete( new DeleteEvent( entityName, object, this ) );
 	}
 
 	@Override
 	public void delete(String entityName, Object object, boolean isCascadeDeleteEnabled, Set transientEntities)
 			throws HibernateException {
+		checkOpenOrWaitingForAutoClose();
 		if ( TRACE_ENABLED && persistenceContext.isRemovingOrphanBeforeUpates() ) {
-			logRemoveOrphanBeforeUpdates( "beforeQuery continuing", entityName, object );
+			logRemoveOrphanBeforeUpdates( "before continuing", entityName, object );
 		}
 		fireDelete(
 				new DeleteEvent(
@@ -925,7 +956,7 @@ public final class SessionImpl
 				transientEntities
 		);
 		if ( TRACE_ENABLED && persistenceContext.isRemovingOrphanBeforeUpates() ) {
-			logRemoveOrphanBeforeUpdates( "afterQuery continuing", entityName, object );
+			logRemoveOrphanBeforeUpdates( "after continuing", entityName, object );
 		}
 	}
 
@@ -938,6 +969,7 @@ public final class SessionImpl
 		}
 		persistenceContext.beginRemoveOrphanBeforeUpdates();
 		try {
+			checkOpenOrWaitingForAutoClose();
 			fireDelete( new DeleteEvent( entityName, child, false, true, this ) );
 		}
 		finally {
@@ -951,14 +983,13 @@ public final class SessionImpl
 	private void logRemoveOrphanBeforeUpdates(String timing, String entityName, Object entity) {
 		final EntityEntry entityEntry = persistenceContext.getEntry( entity );
 		log.tracef(
-				"%s remove orphan beforeQuery updates: [%s]",
+				"%s remove orphan before updates: [%s]",
 				timing,
 				entityEntry == null ? entityName : MessageHelper.infoString( entityName, entityEntry.getId() )
 		);
 	}
 
 	private void fireDelete(DeleteEvent event) {
-		checkOpen();
 		try{
 		checkTransactionSynchStatus();
 		for ( DeleteEventListener listener : listeners( EventType.DELETE ) ) {
@@ -981,7 +1012,6 @@ public final class SessionImpl
 	}
 
 	private void fireDelete(DeleteEvent event, Set transientEntities) {
-		checkOpen();
 		try{
 		checkTransactionSynchStatus();
 		for ( DeleteEventListener listener : listeners( EventType.DELETE ) ) {
@@ -1206,7 +1236,7 @@ public final class SessionImpl
 	}
 
 	private void fireLoad(LoadEvent event, LoadType loadType) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		for ( LoadEventListener listener : listeners( EventType.LOAD ) ) {
 			listener.onLoad( event, loadType );
@@ -1215,7 +1245,7 @@ public final class SessionImpl
 	}
 
 	private void fireResolveNaturalId(ResolveNaturalIdEvent event) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		for ( ResolveNaturalIdEventListener listener : listeners( EventType.RESOLVE_NATURAL_ID ) ) {
 			listener.onResolveNaturalId( event );
@@ -1228,42 +1258,54 @@ public final class SessionImpl
 
 	@Override
 	public void refresh(Object object) throws HibernateException {
-		refresh( null, object );
+		checkOpen();
+		fireRefresh( new RefreshEvent( null, object, this ) );
 	}
 
 	@Override
 	public void refresh(String entityName, Object object) throws HibernateException {
+		checkOpen();
 		fireRefresh( new RefreshEvent( entityName, object, this ) );
 	}
 
 	@Override
 	public void refresh(Object object, LockMode lockMode) throws HibernateException {
+		checkOpen();
 		fireRefresh( new RefreshEvent( object, lockMode, this ) );
 	}
 
 	@Override
 	public void refresh(Object object, LockOptions lockOptions) throws HibernateException {
+		checkOpen();
 		refresh( null, object, lockOptions );
 	}
 
 	@Override
 	public void refresh(String entityName, Object object, LockOptions lockOptions) throws HibernateException {
+		checkOpen();
 		fireRefresh( new RefreshEvent( entityName, object, lockOptions, this ) );
 	}
 
 	@Override
 	public void refresh(String entityName, Object object, Map refreshedAlready) throws HibernateException {
+		checkOpenOrWaitingForAutoClose();
 		fireRefresh( refreshedAlready, new RefreshEvent( entityName, object, this ) );
 	}
 
 	private void fireRefresh(RefreshEvent event) {
 		try {
-			if ( getSessionFactory().getSessionFactoryOptions().isJpaBootstrap() ) {
-				if ( !contains( event.getObject() ) ) {
-					throw new IllegalArgumentException( "Entity not managed" );
+			if ( !getSessionFactory().getSessionFactoryOptions().isAllowRefreshDetachedEntity() ) {
+				if ( event.getEntityName() != null ) {
+					if ( !contains( event.getEntityName(), event.getObject() ) ) {
+						throw new IllegalArgumentException( "Entity not managed" );
+					}
+				}
+				else {
+					if ( !contains( event.getObject() ) ) {
+						throw new IllegalArgumentException( "Entity not managed" );
+					}
 				}
 			}
-			checkOpen();
 			checkTransactionSynchStatus();
 			for ( RefreshEventListener listener : listeners( EventType.REFRESH ) ) {
 				listener.onRefresh( event );
@@ -1285,7 +1327,6 @@ public final class SessionImpl
 
 	private void fireRefresh(Map refreshedAlready, RefreshEvent event) {
 		try {
-			checkOpen();
 			checkTransactionSynchStatus();
 			for ( RefreshEventListener listener : listeners( EventType.REFRESH ) ) {
 				listener.onRefresh( event, refreshedAlready );
@@ -1382,9 +1423,12 @@ public final class SessionImpl
 	@Override
 	public void flush() throws HibernateException {
 		checkOpen();
+		doFlush();
+	}
+
+	private void doFlush() {
 		checkTransactionNeeded();
 		checkTransactionSynchStatus();
-
 
 		try {
 			if ( persistenceContext.getCascadeLevel() > 0 ) {
@@ -1405,6 +1449,7 @@ public final class SessionImpl
 
 	@Override
 	public void setFlushMode(FlushModeType flushModeType) {
+		checkOpen();
 		setHibernateFlushMode( FlushModeTypeHelper.getFlushMode( flushModeType ) );
 	}
 
@@ -1424,13 +1469,13 @@ public final class SessionImpl
 					entityEntry.getPersister().getEntityName()
 			);
 		}
-
-		flush();
+		checkOpenOrWaitingForAutoClose();
+		doFlush();
 	}
 
 	@Override
 	public List list(String query, QueryParameters queryParameters) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		queryParameters.validateParameters();
 
@@ -1459,7 +1504,7 @@ public final class SessionImpl
 
 	@Override
 	public int executeUpdate(String query, QueryParameters queryParameters) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		queryParameters.validateParameters();
 		HQLQueryPlan plan = getQueryPlan( query, false );
@@ -1482,7 +1527,7 @@ public final class SessionImpl
 	public int executeNativeUpdate(
 			NativeSQLQuerySpecification nativeQuerySpecification,
 			QueryParameters queryParameters) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		queryParameters.validateParameters();
 		NativeSQLQueryPlan plan = getNativeQueryPlan( nativeQuerySpecification );
@@ -1505,7 +1550,7 @@ public final class SessionImpl
 
 	@Override
 	public Iterator iterate(String query, QueryParameters queryParameters) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		queryParameters.validateParameters();
 
@@ -1528,14 +1573,14 @@ public final class SessionImpl
 
 	@Override
 	public ScrollableResultsImplementor scroll(String query, QueryParameters queryParameters) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
-		
+
 		HQLQueryPlan plan = queryParameters.getQueryPlan();
 		if ( plan == null ) {
 			plan = getQueryPlan( query, false );
 		}
-		
+
 		autoFlushIfRequired( plan.getQuerySpaces() );
 
 		dontFlushFromFind++;
@@ -1574,7 +1619,7 @@ public final class SessionImpl
 	 */
 	@Override
 	public Object instantiate(EntityPersister persister, Serializable id) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		Object result = getInterceptor().instantiate(
 				persister.getEntityName(),
@@ -1590,7 +1635,7 @@ public final class SessionImpl
 
 	@Override
 	public EntityPersister getEntityPersister(final String entityName, final Object object) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		if ( entityName == null ) {
 			return getFactory().getMetamodel().entityPersister( guessEntityName( object ) );
 		}
@@ -1641,7 +1686,7 @@ public final class SessionImpl
 	 */
 	@Override
 	public Serializable getContextEntityIdentifier(Object object) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		if ( object instanceof HibernateProxy ) {
 			return getProxyIdentifier( object );
 		}
@@ -1694,7 +1739,7 @@ public final class SessionImpl
 					getLoadQueryInfluencers().getEnabledFilters()
 			);
 			if ( autoFlushIfRequired( plan.getQuerySpaces() ) ) {
-				// might need to run a different filter entirely afterQuery the flush
+				// might need to run a different filter entirely after the flush
 				// because the collection role may have changed
 				entry = persistenceContext.getCollectionEntryOrNull( collection );
 				CollectionPersister roleAfterFlush = ( entry == null ) ? null : entry.getLoadedPersister();
@@ -1713,8 +1758,13 @@ public final class SessionImpl
 		}
 
 		if ( parameters != null ) {
-			parameters.getPositionalParameterValues()[0] = entry.getLoadedKey();
-			parameters.getPositionalParameterTypes()[0] = entry.getLoadedPersister().getKeyType();
+			parameters.getNamedParameters().put(
+					CollectionFilterKeyParameterSpecification.PARAM_KEY,
+					new TypedValue(
+							entry.getLoadedPersister().getKeyType(),
+							entry.getLoadedKey()
+					)
+			);
 		}
 
 		return plan;
@@ -1722,7 +1772,7 @@ public final class SessionImpl
 
 	@Override
 	public List listFilter(Object collection, String filter, QueryParameters queryParameters) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		FilterQueryPlan plan = getFilterQueryPlan( collection, filter, queryParameters, false );
 		List results = Collections.EMPTY_LIST;
@@ -1743,7 +1793,7 @@ public final class SessionImpl
 
 	@Override
 	public Iterator iterateFilter(Object collection, String filter, QueryParameters queryParameters) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		FilterQueryPlan plan = getFilterQueryPlan( collection, filter, queryParameters, true );
 		Iterator itr = plan.performIterate( queryParameters, this );
@@ -1788,7 +1838,7 @@ public final class SessionImpl
 		// TODO: Is this guaranteed to always be CriteriaImpl?
 		CriteriaImpl criteriaImpl = (CriteriaImpl) criteria;
 
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 
 		String entityName = criteriaImpl.getEntityOrClassName();
@@ -1814,6 +1864,9 @@ public final class SessionImpl
 	public List list(Criteria criteria) throws HibernateException {
 		// TODO: Is this guaranteed to always be CriteriaImpl?
 		CriteriaImpl criteriaImpl = (CriteriaImpl) criteria;
+		if ( criteriaImpl.getMaxResults() != null && criteriaImpl.getMaxResults() == 0 ) {
+			return Collections.EMPTY_LIST;
+		}
 
 		final NaturalIdLoadAccess naturalIdLoadAccess = this.tryNaturalIdLoadAccess( criteriaImpl );
 		if ( naturalIdLoadAccess != null ) {
@@ -1822,7 +1875,7 @@ public final class SessionImpl
 		}
 
 
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 //		checkTransactionSynchStatus();
 
 		String[] implementors = getFactory().getMetamodel().getImplementors( criteriaImpl.getEntityOrClassName() );
@@ -1980,7 +2033,7 @@ public final class SessionImpl
 						if ( entityName == null ) {
 							throw new IllegalArgumentException( "Could not resolve entity-name [" + object + "]" );
 						}
-						getSessionFactory().getMetamodel().entityPersister( object.getClass() );
+						getSessionFactory().getMetamodel().entityPersister( entityName );
 					}
 					catch (HibernateException e) {
 						throw new IllegalArgumentException( "Not an entity [" + object.getClass() + "]", e );
@@ -2077,14 +2130,14 @@ public final class SessionImpl
 
 	@Override
 	public ScrollableResultsImplementor scrollCustomQuery(CustomQuery customQuery, QueryParameters queryParameters) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 //		checkTransactionSynchStatus();
 
 		if ( log.isTraceEnabled() ) {
 			log.tracev( "Scroll SQL query: {0}", customQuery.getSQL() );
 		}
 
-		CustomLoader loader = new CustomLoader( customQuery, getFactory() );
+		CustomLoader loader = getFactory().getQueryPlanCache().getNativeQueryInterpreter().createCustomLoader( customQuery, getFactory() );
 
 		autoFlushIfRequired( loader.getQuerySpaces() );
 
@@ -2101,14 +2154,14 @@ public final class SessionImpl
 	// basically just an adapted copy of find(CriteriaImpl)
 	@Override
 	public List listCustomQuery(CustomQuery customQuery, QueryParameters queryParameters) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 //		checkTransactionSynchStatus();
 
 		if ( log.isTraceEnabled() ) {
 			log.tracev( "SQL query: {0}", customQuery.getSQL() );
 		}
 
-		CustomLoader loader = new CustomLoader( customQuery, getFactory() );
+		CustomLoader loader = getFactory().getQueryPlanCache().getNativeQueryInterpreter().createCustomLoader( customQuery, getFactory() );
 
 		autoFlushIfRequired( loader.getQuerySpaces() );
 
@@ -2134,7 +2187,7 @@ public final class SessionImpl
 
 	@Override
 	public void initializeCollection(PersistentCollection collection, boolean writing) {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		checkTransactionSynchStatus();
 		InitializeCollectionEvent event = new InitializeCollectionEvent( collection, this );
 		for ( InitializeCollectionEventListener listener : listeners( EventType.INIT_COLLECTION ) ) {
@@ -2183,14 +2236,14 @@ public final class SessionImpl
 
 	private void throwTransientObjectException(Object object) throws HibernateException {
 		throw new TransientObjectException(
-				"object references an unsaved transient instance - save the transient instance beforeQuery flushing: " +
+				"object references an unsaved transient instance - save the transient instance before flushing: " +
 						guessEntityName( object )
 		);
 	}
 
 	@Override
 	public String guessEntityName(Object object) throws HibernateException {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		return getEntityNameResolver().resolveEntityName( object );
 	}
 
@@ -2223,14 +2276,14 @@ public final class SessionImpl
 
 	@Override
 	public ActionQueue getActionQueue() {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 //		checkTransactionSynchStatus();
 		return actionQueue;
 	}
 
 	@Override
 	public PersistenceContext getPersistenceContext() {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 //		checkTransactionSynchStatus();
 		return persistenceContext;
 	}
@@ -2380,7 +2433,7 @@ public final class SessionImpl
 	public void afterTransactionCompletion(boolean successful, boolean delayed) {
 		log.tracef( "SessionImpl#afterTransactionCompletion(successful=%s, delayed=%s)", successful, delayed );
 
-		if ( !isClosed() ) {
+		if ( !isClosed() || waitingForAutoClose ) {
 			if ( autoClear ||!successful ) {
 				internalClear();
 			}
@@ -2403,7 +2456,7 @@ public final class SessionImpl
 		}
 
 		if ( !delayed ) {
-			if ( shouldAutoClose() && !isClosed() ) {
+			if ( shouldAutoClose() && (!isClosed() || waitingForAutoClose) ) {
 				managedClose();
 			}
 		}
@@ -2423,7 +2476,7 @@ public final class SessionImpl
 
 		private LobCreator lobCreator() {
 			// Always use NonContextualLobCreator.  If ContextualLobCreator is
-			// used both here and in WrapperOptions, 
+			// used both here and in WrapperOptions,
 			return NonContextualLobCreator.INSTANCE;
 		}
 
@@ -2543,6 +2596,10 @@ public final class SessionImpl
 					null;
 		}
 
+		@Override
+		public boolean isQueryParametersValidationEnabled() {
+			return session.isQueryParametersValidationEnabled();
+		}
 	}
 
 	private class LockRequestImpl implements LockRequest {
@@ -2599,35 +2656,39 @@ public final class SessionImpl
 
 	@Override
 	protected void addSharedSessionTransactionObserver(TransactionCoordinator transactionCoordinator) {
-		transactionCoordinator.addObserver(
-				new TransactionObserver() {
-					@Override
-					public void afterBegin() {
-					}
+		this.transactionObserver = new TransactionObserver() {
+			@Override
+			public void afterBegin() {
+			}
 
-					@Override
-					public void beforeCompletion() {
-						if ( isOpen() && getHibernateFlushMode() !=  FlushMode.MANUAL ) {
-							managedFlush();
-						}
-						actionQueue.beforeTransactionCompletion();
-						try {
-							getInterceptor().beforeTransactionCompletion( getCurrentTransaction() );
-						}
-						catch (Throwable t) {
-							log.exceptionInBeforeTransactionCompletionInterceptor( t );
-						}
-					}
-
-					@Override
-					public void afterCompletion(boolean successful, boolean delayed) {
-						afterTransactionCompletion( successful, delayed );
-						if ( !isClosed() && autoClose ) {
-							managedClose();
-						}
-					}
+			@Override
+			public void beforeCompletion() {
+				if ( isOpen() && getHibernateFlushMode() !=  FlushMode.MANUAL ) {
+					managedFlush();
 				}
-		);
+				actionQueue.beforeTransactionCompletion();
+				try {
+					getInterceptor().beforeTransactionCompletion( getCurrentTransaction() );
+				}
+				catch (Throwable t) {
+					log.exceptionInBeforeTransactionCompletionInterceptor( t );
+				}
+			}
+
+			@Override
+			public void afterCompletion(boolean successful, boolean delayed) {
+				afterTransactionCompletion( successful, delayed );
+				if ( !isClosed() && autoClose ) {
+					managedClose();
+				}
+			}
+		};
+		transactionCoordinator.addObserver(transactionObserver);
+	}
+
+	@Override
+	protected void removeSharedSessionTransactionObserver(TransactionCoordinator transactionCoordinator) {
+		transactionCoordinator.removeObserver( transactionObserver );
 	}
 
 	private class IdentifierLoadAccessImpl<T> implements IdentifierLoadAccess<T> {
@@ -2768,6 +2829,8 @@ public final class SessionImpl
 		private CacheMode cacheMode;
 		private Integer batchSize;
 		private boolean sessionCheckingEnabled;
+		private boolean returnOfDeletedEntitiesEnabled;
+		private boolean orderedReturnEnabled = true;
 
 		public MultiIdentifierLoadAccessImpl(EntityPersister entityPersister) {
 			this.entityPersister = entityPersister;
@@ -2814,6 +2877,28 @@ public final class SessionImpl
 		@Override
 		public MultiIdentifierLoadAccess<T> enableSessionCheck(boolean enabled) {
 			this.sessionCheckingEnabled = enabled;
+			return this;
+		}
+
+		@Override
+		public boolean isReturnOfDeletedEntitiesEnabled() {
+			return returnOfDeletedEntitiesEnabled;
+		}
+
+		@Override
+		public MultiIdentifierLoadAccess<T> enableReturnOfDeletedEntities(boolean enabled) {
+			this.returnOfDeletedEntitiesEnabled = enabled;
+			return this;
+		}
+
+		@Override
+		public boolean isOrderReturnEnabled() {
+			return orderedReturnEnabled;
+		}
+
+		@Override
+		public MultiIdentifierLoadAccess<T> enableOrderedReturn(boolean enabled) {
+			this.orderedReturnEnabled = enabled;
 			return this;
 		}
 
@@ -3117,14 +3202,13 @@ public final class SessionImpl
 
 	@Override
 	public void afterTransactionBegin() {
-		checkOpen();
+		checkOpenOrWaitingForAutoClose();
 		getInterceptor().afterTransactionBegin( getCurrentTransaction() );
 	}
 
 	@Override
 	public void flushBeforeTransactionCompletion() {
-		final boolean doFlush = ! isClosed()
-				&& isTransactionFlushable()
+		final boolean doFlush = isTransactionFlushable()
 				&& getHibernateFlushMode() != FlushMode.MANUAL;
 
 		try {
@@ -3388,7 +3472,7 @@ public final class SessionImpl
 	}
 
 	private void checkTransactionNeeded() {
-		if ( !isTransactionInProgress() ) {
+		if ( disallowOutOfTransactionUpdateOperations && !isTransactionInProgress() ) {
 			throw new TransactionRequiredException( "no transaction is in progress" );
 		}
 	}
@@ -3510,13 +3594,13 @@ public final class SessionImpl
 	public void setProperty(String propertyName, Object value) {
 		checkOpen();
 
-		if ( ENTITY_MANAGER_SPECIFIC_PROPERTIES.contains( propertyName ) ) {
-			properties.put( propertyName, value );
-			applyProperties();
+		if ( !( value instanceof Serializable ) ) {
+			log.warnf( "Property '" + propertyName + "' is not serializable, value won't be set." );
+			return;
 		}
-		else {
-			log.debugf( "Trying to set a property which is not supported on entity manager level" );
-		}
+
+		properties.put( propertyName, value );
+		applyProperties();
 	}
 
 	@Override
@@ -3730,21 +3814,25 @@ public final class SessionImpl
 
 	@Override
 	public Object getDelegate() {
+		checkOpen();
 		return this;
 	}
 
 	@Override
 	public SessionFactoryImplementor getEntityManagerFactory() {
+		checkOpen();
 		return getFactory();
 	}
 
 	@Override
 	public CriteriaBuilder getCriteriaBuilder() {
+		checkOpen();
 		return getFactory().getCriteriaBuilder();
 	}
 
 	@Override
 	public MetamodelImplementor getMetamodel() {
+		checkOpen();
 		return getFactory().getMetamodel();
 	}
 
@@ -3825,10 +3913,15 @@ public final class SessionImpl
 		loadQueryInfluencers = (LoadQueryInfluencers) ois.readObject();
 
 		// LoadQueryInfluencers.getEnabledFilters() tries to validate each enabled
-		// filter, which will fail when called beforeQuery FilterImpl.afterDeserialize( factory );
+		// filter, which will fail when called before FilterImpl.afterDeserialize( factory );
 		// Instead lookup the filter by name and then call FilterImpl.afterDeserialize( factory ).
 		for ( String filterName : loadQueryInfluencers.getEnabledFilterNames() ) {
 			( (FilterImpl) loadQueryInfluencers.getEnabledFilter( filterName ) ).afterDeserialize( getFactory() );
 		}
+
+		initializeFromSessionOwner( null );
+
+		this.disallowOutOfTransactionUpdateOperations = !getFactory().getSessionFactoryOptions().isAllowOutOfTransactionUpdateOperations();
+		this.discardOnClose = getFactory().getSessionFactoryOptions().isReleaseResourcesOnCloseEnabled();
 	}
 }

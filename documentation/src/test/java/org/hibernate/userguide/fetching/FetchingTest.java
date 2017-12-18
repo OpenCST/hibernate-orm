@@ -33,7 +33,7 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -42,8 +42,6 @@ import static org.junit.Assert.assertNotNull;
  */
 @RequiresDialect(H2Dialect.class)
 public class FetchingTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( FetchingTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {

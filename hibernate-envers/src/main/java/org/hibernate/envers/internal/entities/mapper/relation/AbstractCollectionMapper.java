@@ -9,15 +9,20 @@ package org.hibernate.envers.internal.entities.mapper.relation;
 import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.hibernate.collection.internal.PersistentMap;
 import org.hibernate.collection.spi.PersistentCollection;
+import org.hibernate.engine.spi.CollectionEntry;
 import org.hibernate.engine.spi.SessionImplementor;
 import org.hibernate.envers.RevisionType;
 import org.hibernate.envers.boot.internal.EnversService;
@@ -29,11 +34,13 @@ import org.hibernate.envers.internal.entities.mapper.relation.lazy.initializor.I
 import org.hibernate.envers.internal.reader.AuditReaderImplementor;
 import org.hibernate.envers.internal.tools.ReflectionTools;
 import org.hibernate.internal.util.compare.EqualsHelper;
+import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.property.access.spi.Setter;
 
 /**
  * @author Adam Warski (adam at warski dot org)
  * @author Michal Skowronek (mskowr at o2 dot pl)
+ * @author Chris Cranford
  */
 public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 	protected final CommonCollectionMapperData commonCollectionMapperData;
@@ -134,36 +141,33 @@ public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 			return null;
 		}
 
-		final List<PersistentCollectionChangeData> collectionChanges = new ArrayList<>();
-
-		// Comparing new and old collection content.
-		final Collection newCollection = getNewCollectionContent( newColl );
-		final Collection oldCollection = getOldCollectionContent( oldColl );
-
-		final Set<Object> added = new HashSet<>();
-		if ( newColl != null ) {
-			added.addAll( newCollection );
+		// HHH-11063
+		final CollectionEntry collectionEntry = session.getPersistenceContext().getCollectionEntry( newColl );
+		if ( collectionEntry != null ) {
+			// This next block delegates only to the persiter-based collection change code if
+			// the following are true:
+			//	1. New collection is not a PersistentMap.
+			//	2. The collection has a persister.
+			//	3. The collection is not indexed, e.g. @IndexColumn
+			//
+			// In the case of 1 and 3, the collection is transformed into a set of Pair<> elements where the
+			// pair's left element is either the map key or the index.  In these cases, the key/index do
+			// affect the change code; hence why they're skipped here and handled at the end.
+			//
+			// For all others, the persister based method uses the collection's ElementType#isSame to calculate
+			// equality between the newColl and oldColl.  This enforces the same equality check that core uses
+			// for element types such as @Entity in cases where the hash code does not use the id field but has
+			// the same value in both collections.  Using #isSame, these will be seen as differing elements and
+			// changes to the collection will be returned.
+			if ( !( newColl instanceof PersistentMap ) ) {
+				final CollectionPersister collectionPersister = collectionEntry.getCurrentPersister();
+				if ( collectionPersister != null && !collectionPersister.hasIndex() ) {
+					return mapCollectionChanges( session, newColl, oldColl, id, collectionPersister );
+				}
+			}
 		}
-		// Re-hashing the old collection as the hash codes of the elements there may have changed, and the
-		// removeAll in AbstractSet has an implementation that is hashcode-change sensitive (as opposed to addAll).
-		if ( oldColl != null ) {
-			added.removeAll( new HashSet( oldCollection ) );
-		}
 
-		addCollectionChanges( session, collectionChanges, added, RevisionType.ADD, id );
-
-		final Set<Object> deleted = new HashSet<>();
-		if ( oldColl != null ) {
-			deleted.addAll( oldCollection );
-		}
-		// The same as above - re-hashing new collection.
-		if ( newColl != null ) {
-			deleted.removeAll( new HashSet( newCollection ) );
-		}
-
-		addCollectionChanges( session, collectionChanges, deleted, RevisionType.DEL, id );
-
-		return collectionChanges;
+		return mapCollectionChanges( session, newColl, oldColl, id );
 	}
 
 	@Override
@@ -192,10 +196,18 @@ public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 				data.put( propertyData.getModifiedFlagPropertyName(), true );
 			}
 			else {
+				// HHH-7949 - Performance optimization to avoid lazy-fetching collections that have
+				// not been changed for deriving the modified flags value.
+				final PersistentCollection pc = (PersistentCollection) newObj;
+				if ( ( pc != null && !pc.isDirty() ) || ( newObj == null && oldObj == null ) ) {
+					data.put( propertyData.getModifiedFlagPropertyName(), false );
+					return;
+				}
+
 				final List<PersistentCollectionChangeData> changes = mapCollectionChanges(
 						session,
 						commonCollectionMapperData.getCollectionReferencingPropertyData().getName(),
-						(PersistentCollection) newObj,
+						pc,
 						(Serializable) oldObj,
 						null
 				);
@@ -237,44 +249,169 @@ public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 
 	@Override
 	public void mapToEntityFromMap(
-			EnversService enversService,
-			Object obj,
-			Map data,
-			Object primaryKey,
-			AuditReaderImplementor versionsReader,
-			Number revision) {
-		final Setter setter = ReflectionTools.getSetter(
-				obj.getClass(),
-				commonCollectionMapperData.getCollectionReferencingPropertyData(),
-				enversService.getServiceRegistry()
-		);
-		try {
-			setter.set(
-					obj,
-					proxyConstructor.newInstance(
-							getInitializor(
-									enversService,
-									versionsReader,
-									primaryKey,
-									revision,
-									RevisionType.DEL.equals(
-											data.get(
-													enversService.getAuditEntitiesConfiguration().getRevisionTypePropName()
+			final EnversService enversService,
+			final Object obj,
+			final Map data,
+			final Object primaryKey,
+			final AuditReaderImplementor versionsReader,
+			final Number revision) {
+		final String revisionTypePropertyName = enversService.getAuditEntitiesConfiguration().getRevisionTypePropName();
+		AccessController.doPrivileged(
+				new PrivilegedAction<Object>() {
+					@Override
+					public Object run() {
+						final Setter setter = ReflectionTools.getSetter(
+								obj.getClass(),
+								commonCollectionMapperData.getCollectionReferencingPropertyData(),
+								enversService.getServiceRegistry()
+						);
+
+						try {
+							setter.set(
+									obj,
+									proxyConstructor.newInstance(
+											getInitializor(
+													enversService,
+													versionsReader,
+													primaryKey,
+													revision,
+													RevisionType.DEL.equals( data.get( revisionTypePropertyName ) )
 											)
-									)
-							)
-					),
-					null
-			);
+									),
+									null
+							);
+						}
+						catch (InstantiationException e) {
+							throw new AuditException( e );
+						}
+						catch (IllegalAccessException e) {
+							throw new AuditException( e );
+						}
+						catch (InvocationTargetException e) {
+							throw new AuditException( e );
+						}
+
+						return null;
+					}
+				}
+		);
+	}
+
+	/**
+	 * Map collection changes using hash identity.
+	 *
+	 * @param session The session.
+	 * @param newColl The new persistent collection.
+	 * @param oldColl The old collection.
+	 * @param id The owning entity identifier.
+	 * @return the persistent collection changes.
+	 */
+	@SuppressWarnings("unchecked")
+	private List<PersistentCollectionChangeData> mapCollectionChanges(
+			SessionImplementor session,
+			PersistentCollection newColl,
+			Serializable oldColl,
+			Serializable id) {
+		final List<PersistentCollectionChangeData> collectionChanges = new ArrayList<PersistentCollectionChangeData>();
+
+		// Comparing new and old collection content.
+		final Collection newCollection = getNewCollectionContent( newColl );
+		final Collection oldCollection = getOldCollectionContent( oldColl );
+
+		final Set<Object> added = new HashSet<>();
+		if ( newColl != null ) {
+			added.addAll( newCollection );
 		}
-		catch (InstantiationException e) {
-			throw new AuditException( e );
+		// Re-hashing the old collection as the hash codes of the elements there may have changed, and the
+		// removeAll in AbstractSet has an implementation that is hashcode-change sensitive (as opposed to addAll).
+		if ( oldColl != null ) {
+			added.removeAll( new HashSet( oldCollection ) );
 		}
-		catch (IllegalAccessException e) {
-			throw new AuditException( e );
+		addCollectionChanges( session, collectionChanges, added, RevisionType.ADD, id );
+
+		final Set<Object> deleted = new HashSet<>();
+		if ( oldColl != null ) {
+			deleted.addAll( oldCollection );
 		}
-		catch (InvocationTargetException e) {
-			throw new AuditException( e );
+		// The same as above - re-hashing new collection.
+		if ( newColl != null ) {
+			deleted.removeAll( new HashSet( newCollection ) );
 		}
+		addCollectionChanges( session, collectionChanges, deleted, RevisionType.DEL, id );
+
+		return collectionChanges;
+	}
+
+	/**
+	 * Map collection changes using the collection element type equality functionality.
+	 *
+	 * @param session The session.
+	 * @param newColl The new persistent collection.
+	 * @param oldColl The old collection.
+	 * @param id The owning entity identifier.
+	 * @param collectionPersister The collection persister.
+	 * @return the persistent collection changes.
+	 */
+	private List<PersistentCollectionChangeData> mapCollectionChanges(
+			SessionImplementor session,
+			PersistentCollection newColl,
+			Serializable oldColl,
+			Serializable id,
+			CollectionPersister collectionPersister) {
+
+		final List<PersistentCollectionChangeData> collectionChanges = new ArrayList<PersistentCollectionChangeData>();
+
+		// Comparing new and old collection content.
+		final Collection newCollection = getNewCollectionContent( newColl );
+		final Collection oldCollection = getOldCollectionContent( oldColl );
+
+		// take the new collection and remove any that exist in the old collection.
+		// take the resulting Set<> and generate ADD changes.
+		final Set<Object> added = new HashSet<>();
+		if ( newColl != null ) {
+			added.addAll( newCollection );
+		}
+		if ( oldColl != null && collectionPersister != null ) {
+			for ( Object object : oldCollection ) {
+				for ( Iterator addedIt = added.iterator(); addedIt.hasNext(); ) {
+					Object object2 = addedIt.next();
+					if ( collectionPersister.getElementType().isSame( object, object2 ) ) {
+						addedIt.remove();
+						break;
+					}
+				}
+			}
+		}
+		addCollectionChanges( session, collectionChanges, added, RevisionType.ADD, id );
+
+		// take the old collection and remove any that exist in the new collection.
+		// take the resulting Set<> and generate DEL changes.
+		final Set<Object> deleted = new HashSet<>();
+		if ( oldColl != null ) {
+			deleted.addAll( oldCollection );
+		}
+		if ( newColl != null && collectionPersister != null ) {
+			for ( Object object : newCollection ) {
+				for ( Iterator deletedIt = deleted.iterator(); deletedIt.hasNext(); ) {
+					Object object2 = deletedIt.next();
+					if ( collectionPersister.getElementType().isSame( object, object2 ) ) {
+						deletedIt.remove();
+						break;
+					}
+				}
+			}
+		}
+		addCollectionChanges( session, collectionChanges, deleted, RevisionType.DEL, id );
+
+		return collectionChanges;
+	}
+
+	@Override
+	public boolean hasPropertiesWithModifiedFlag() {
+		if ( commonCollectionMapperData != null ) {
+			final PropertyData propertyData = commonCollectionMapperData.getCollectionReferencingPropertyData();
+			return propertyData != null && propertyData.isUsingModifiedFlag();
+		}
+		return false;
 	}
 }

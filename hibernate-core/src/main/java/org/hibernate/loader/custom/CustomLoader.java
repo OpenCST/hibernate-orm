@@ -7,12 +7,12 @@
 package org.hibernate.loader.custom;
 
 import java.io.Serializable;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import org.hibernate.HibernateException;
@@ -33,6 +33,7 @@ import org.hibernate.loader.CollectionAliases;
 import org.hibernate.loader.EntityAliases;
 import org.hibernate.loader.Loader;
 import org.hibernate.loader.spi.AfterLoadAction;
+import org.hibernate.param.ParameterBinder;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.persister.collection.QueryableCollection;
 import org.hibernate.persister.entity.Loadable;
@@ -55,7 +56,8 @@ public class CustomLoader extends Loader {
 
 	private final String sql;
 	private final Set<Serializable> querySpaces = new HashSet<>();
-	private final Map namedParameterBindPoints;
+
+	private final List<ParameterBinder> paramValueBinders;
 
 	private final Queryable[] entityPersisters;
 	private final int[] entiytOwners;
@@ -85,7 +87,8 @@ public class CustomLoader extends Loader {
 
 		this.sql = customQuery.getSQL();
 		this.querySpaces.addAll( customQuery.getQuerySpaces() );
-		this.namedParameterBindPoints = customQuery.getNamedParameterBindPoints();
+
+		this.paramValueBinders = customQuery.getParameterValueBinders();
 
 		List<Queryable> entityPersisters = new ArrayList<>();
 		List<Integer> entityOwners = new ArrayList<>();
@@ -370,23 +373,19 @@ public class CustomLoader extends Loader {
 
 	public ScrollableResultsImplementor scroll(final QueryParameters queryParameters, final SharedSessionContractImplementor session)
 			throws HibernateException {
+
+		ResultTransformer resultTransformer = queryParameters.getResultTransformer();
+
+		HolderInstantiator holderInstantiator = ( resultTransformer == null ) ?
+				HolderInstantiator.NOOP_INSTANTIATOR :
+				new HolderInstantiator( resultTransformer, this::getReturnAliasesForTransformer );
+
 		return scroll(
 				queryParameters,
 				resultTypes,
-				getHolderInstantiator( queryParameters.getResultTransformer(), getReturnAliasesForTransformer() ),
+				holderInstantiator,
 				session
 		);
-	}
-
-	static private HolderInstantiator getHolderInstantiator(
-			ResultTransformer resultTransformer,
-			String[] queryReturnAliases) {
-		if ( resultTransformer == null ) {
-			return HolderInstantiator.NOOP_INSTANTIATOR;
-		}
-		else {
-			return new HolderInstantiator( resultTransformer, queryReturnAliases );
-		}
 	}
 
 	@Override
@@ -457,22 +456,31 @@ public class CustomLoader extends Loader {
 	}
 
 	@Override
-	public int[] getNamedParameterLocs(String name) throws QueryException {
-		Object loc = namedParameterBindPoints.get( name );
-		if ( loc == null ) {
-			throw new QueryException(
-					"Named parameter does not appear in Query: " + name,
-					sql
+	protected int bindParameterValues(
+			PreparedStatement statement,
+			QueryParameters queryParameters,
+			int startIndex,
+			SharedSessionContractImplementor session) throws SQLException {
+		final Serializable optionalId = queryParameters.getOptionalId();
+		if ( optionalId != null ) {
+			paramValueBinders.get( 0 ).bind( statement, queryParameters, session, startIndex );
+			return session.getFactory().getMetamodel()
+					.entityPersister( queryParameters.getOptionalEntityName() )
+					.getIdentifierType()
+					.getColumnSpan( session.getFactory() );
+		}
+
+		int span = 0;
+		for ( ParameterBinder paramValueBinder : paramValueBinders ) {
+			span += paramValueBinder.bind(
+					statement,
+					queryParameters,
+					session,
+					startIndex + span
 			);
 		}
-		if ( loc instanceof Integer ) {
-			return new int[] {(Integer) loc};
-		}
-		else {
-			return ArrayHelper.toIntArray( (List) loc );
-		}
+		return span;
 	}
-
 
 	@Override
 	protected void autoDiscoverTypes(ResultSet rs) {
@@ -522,7 +530,7 @@ public class CustomLoader extends Loader {
 
 	/**
 	 * {@link #resultTypes} can be overridden by {@link #autoDiscoverTypes(ResultSet)},
-	 * *afterQuery* {@link #list(SharedSessionContractImplementor, QueryParameters)} has already been called.  It's a bit of a
+	 * *after* {@link #list(SharedSessionContractImplementor, QueryParameters)} has already been called.  It's a bit of a
 	 * chicken-and-the-egg issue since {@link #autoDiscoverTypes(ResultSet)} needs the {@link ResultSet}.
 	 * <p/>
 	 * As a hacky workaround, overriden here to provide the {@link #resultTypes}.

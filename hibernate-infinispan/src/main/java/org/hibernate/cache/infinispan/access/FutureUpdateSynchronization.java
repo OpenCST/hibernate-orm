@@ -8,6 +8,7 @@ package org.hibernate.cache.infinispan.access;
 
 import java.util.UUID;
 
+import org.hibernate.cache.infinispan.impl.BaseTransactionalDataRegion;
 import org.hibernate.cache.infinispan.util.FutureUpdate;
 import org.hibernate.cache.infinispan.util.InfinispanMessageLogger;
 import org.hibernate.cache.infinispan.util.InvocationAfterCompletion;
@@ -24,11 +25,19 @@ public class FutureUpdateSynchronization extends InvocationAfterCompletion {
 	private final UUID uuid = UUID.randomUUID();
 	private final Object key;
 	private final Object value;
+	private final BaseTransactionalDataRegion region;
+	private final long sessionTimestamp;
+	private final AdvancedCache cache;
 
-	public FutureUpdateSynchronization(TransactionCoordinator tc, AdvancedCache cache, boolean requiresTransaction, Object key, Object value) {
-		super(tc, cache, requiresTransaction);
+	public FutureUpdateSynchronization(TransactionCoordinator tc, AdvancedCache cache, boolean requiresTransaction,
+			Object key, Object value, BaseTransactionalDataRegion region, long sessionTimestamp) {
+
+		super(tc, requiresTransaction);
+		this.cache = cache;
 		this.key = key;
 		this.value = value;
+		this.region = region;
+		this.sessionTimestamp = sessionTimestamp;
 	}
 
 	public UUID getUuid() {
@@ -36,12 +45,18 @@ public class FutureUpdateSynchronization extends InvocationAfterCompletion {
 	}
 
 	@Override
-	protected void invoke(boolean success, AdvancedCache cache) {
+	protected void invoke(boolean success) {
+		// If the region was invalidated during this session, we can't know that the value we're inserting is valid
+		// so we'll just null the tombstone
+		if (sessionTimestamp < region.getLastRegionInvalidation()) {
+			success = false;
+		}
 		// Exceptions in #afterCompletion() are silently ignored, since the transaction
 		// is already committed in DB. However we must not return until we update the cache.
+		FutureUpdate futureUpdate = new FutureUpdate(uuid, region.nextTimestamp(), success ? this.value : null);
 		for (;;) {
 			try {
-				cache.put(key, new FutureUpdate(uuid, success ? value : null));
+				cache.put(key, futureUpdate);
 				return;
 			}
 			catch (Exception e) {

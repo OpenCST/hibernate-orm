@@ -7,6 +7,7 @@
 package org.hibernate;
 
 import java.sql.Connection;
+import java.util.TimeZone;
 
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
@@ -128,7 +129,7 @@ public interface SessionBuilder<T extends SessionBuilder> {
 	T flushMode(FlushMode flushMode);
 
 	/**
-	 * Should the session be automatically flushed during the "beforeQuery completion" phase of transaction handling.
+	 * Should the session be automatically flushed during the "before completion" phase of transaction handling.
 	 *
 	 * @param flushBeforeCompletion Should the session be automatically flushed
 	 *
@@ -174,4 +175,19 @@ public interface SessionBuilder<T extends SessionBuilder> {
 	 */
 	T clearEventListeners();
 
+	T jdbcTimeZone(TimeZone timeZone);
+
+	/**
+	 * Should {@link org.hibernate.query.Query#setParameter} perform parameter validation
+	 * when the Session is bootstrapped via JPA {@link javax.persistence.EntityManagerFactory}
+	 *
+	 * @param enabled {@code true} indicates the validation should be performed, {@code false} otherwise
+	 * <p>
+	 * The default value is {@code true}
+	 *
+	 * @return {@code this}, for method chaining
+	 */
+	default T setQueryParameterValidation(boolean enabled) {
+		return (T) this;
+	}
 }

@@ -6,6 +6,9 @@
  */
 package org.hibernate.internal;
 
+import java.io.Serializable;
+import java.sql.SQLException;
+
 import javax.persistence.EntityExistsException;
 import javax.persistence.EntityNotFoundException;
 import javax.persistence.LockTimeoutException;
@@ -16,8 +19,6 @@ import javax.persistence.PersistenceException;
 import javax.persistence.PessimisticLockException;
 import javax.persistence.QueryTimeoutException;
 import javax.persistence.RollbackException;
-import java.io.Serializable;
-import java.sql.SQLException;
 
 import org.hibernate.HibernateException;
 import org.hibernate.JDBCException;
@@ -32,6 +33,7 @@ import org.hibernate.dialect.lock.LockingStrategyException;
 import org.hibernate.dialect.lock.OptimisticEntityLockException;
 import org.hibernate.dialect.lock.PessimisticEntityLockException;
 import org.hibernate.engine.spi.ExceptionConverter;
+import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.loader.MultipleBagFetchException;
 
 /**
@@ -40,9 +42,9 @@ import org.hibernate.loader.MultipleBagFetchException;
 public class ExceptionConverterImpl implements ExceptionConverter {
 	private static final EntityManagerMessageLogger log = HEMLogging.messageLogger( ExceptionConverterImpl.class );
 
-	private final AbstractSharedSessionContract sharedSessionContract;
+	private final SharedSessionContractImplementor sharedSessionContract;
 
-	public ExceptionConverterImpl(AbstractSharedSessionContract sharedSessionContract) {
+	public ExceptionConverterImpl(SharedSessionContractImplementor sharedSessionContract) {
 		this.sharedSessionContract = sharedSessionContract;
 	}
 
@@ -50,7 +52,10 @@ public class ExceptionConverterImpl implements ExceptionConverter {
 	public RuntimeException convertCommitException(RuntimeException e) {
 		if ( sharedSessionContract.getFactory().getSessionFactoryOptions().isJpaBootstrap() ) {
 			Throwable wrappedException;
-			if ( e instanceof PersistenceException ) {
+			if ( e instanceof HibernateException ) {
+				wrappedException = convert( (HibernateException) e );
+			}
+			else if ( e instanceof PersistenceException ) {
 				Throwable cause = e.getCause() == null ? e : e.getCause();
 				if ( cause instanceof HibernateException ) {
 					wrappedException = convert( (HibernateException) cause );
@@ -58,9 +63,6 @@ public class ExceptionConverterImpl implements ExceptionConverter {
 				else {
 					wrappedException = cause;
 				}
-			}
-			else if ( e instanceof HibernateException ) {
-				wrappedException = convert( (HibernateException) e );
 			}
 			else {
 				wrappedException = e;
@@ -191,7 +193,7 @@ public class ExceptionConverterImpl implements ExceptionConverter {
 			final Serializable identifier = sose.getIdentifier();
 			if ( identifier != null ) {
 				try {
-					final Object entity = sharedSessionContract.load( sose.getEntityName(), identifier );
+					final Object entity = sharedSessionContract.internalLoad( sose.getEntityName(), identifier, false, true);
 					if ( entity instanceof Serializable ) {
 						//avoid some user errors regarding boundary crossing
 						pe = new OptimisticLockException( e.getMessage(), e, entity );

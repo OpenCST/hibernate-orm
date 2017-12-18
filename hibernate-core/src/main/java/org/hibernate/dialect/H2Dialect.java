@@ -17,6 +17,7 @@ import org.hibernate.dialect.function.AvgWithArgumentCastFunction;
 import org.hibernate.dialect.function.NoArgSQLFunction;
 import org.hibernate.dialect.function.StandardSQLFunction;
 import org.hibernate.dialect.function.VarArgsSQLFunction;
+import org.hibernate.dialect.hint.IndexQueryHintHandler;
 import org.hibernate.dialect.identity.H2IdentityColumnSupport;
 import org.hibernate.dialect.identity.IdentityColumnSupport;
 import org.hibernate.dialect.pagination.AbstractLimitHandler;
@@ -432,7 +433,7 @@ public class H2Dialect extends Dialect {
 	
 	@Override
 	public boolean dropConstraints() {
-		// We don't need to drop constraints beforeQuery dropping tables, that just leads to error
+		// We don't need to drop constraints before dropping tables, that just leads to error
 		// messages about missing tables when we don't have a schema in the database
 		return false;
 	}
@@ -440,5 +441,10 @@ public class H2Dialect extends Dialect {
 	@Override
 	public IdentityColumnSupport getIdentityColumnSupport() {
 		return new H2IdentityColumnSupport();
+	}
+
+	@Override
+	public String getQueryHintString(String query, String hints) {
+		return IndexQueryHintHandler.INSTANCE.addQueryHints( query, hints );
 	}
 }

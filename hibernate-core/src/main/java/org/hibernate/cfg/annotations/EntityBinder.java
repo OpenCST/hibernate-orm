@@ -6,12 +6,14 @@
  */
 package org.hibernate.cfg.annotations;
 
+import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import javax.persistence.Access;
+import javax.persistence.Cacheable;
 import javax.persistence.ConstraintMode;
 import javax.persistence.Entity;
 import javax.persistence.JoinColumn;
@@ -21,6 +23,7 @@ import javax.persistence.NamedEntityGraphs;
 import javax.persistence.PrimaryKeyJoinColumn;
 import javax.persistence.SecondaryTable;
 import javax.persistence.SecondaryTables;
+import javax.persistence.SharedCacheMode;
 
 import org.hibernate.AnnotationException;
 import org.hibernate.AssertionFailure;
@@ -125,16 +128,18 @@ public class EntityBinder {
 	//		atm we use both from here; HBM binding solely uses InFlightMetadataCollector.EntityTableXref
 	private java.util.Map<String, Join> secondaryTables = new HashMap<String, Join>();
 	private java.util.Map<String, Object> secondaryTableJoins = new HashMap<String, Object>();
-	private String cacheConcurrentStrategy;
-	private String cacheRegion;
-	private String naturalIdCacheRegion;
 	private List<Filter> filters = new ArrayList<Filter>();
 	private InheritanceState inheritanceState;
 	private boolean ignoreIdAnnotations;
-	private boolean cacheLazyProperty;
 	private AccessType propertyAccessType = AccessType.DEFAULT;
 	private boolean wrapIdsInEmbeddedComponents;
 	private String subselect;
+
+	private boolean isCached;
+	private String cacheConcurrentStrategy;
+	private String cacheRegion;
+	private boolean cacheLazyProperty;
+	private String naturalIdCacheRegion;
 
 	public boolean wrapIdsInEmbeddedComponents() {
 		return wrapIdsInEmbeddedComponents;
@@ -161,7 +166,7 @@ public class EntityBinder {
 
 	/**
 	 * For the most part, this is a simple delegation to {@link PersistentClass#isPropertyDefinedInHierarchy},
-	 * afterQuery verifying that PersistentClass is indeed set here.
+	 * after verifying that PersistentClass is indeed set here.
 	 *
 	 * @param name The name of the property to check
 	 *
@@ -174,7 +179,6 @@ public class EntityBinder {
 		if ( persistentClass == null ) {
 			return false;
 		}
-
 		return persistentClass.isPropertyDefinedInSuperHierarchy( name );
 	}
 
@@ -280,18 +284,26 @@ public class EntityBinder {
 			}
 			rootClass.setMutable( mutable );
 			rootClass.setExplicitPolymorphism( isExplicitPolymorphism( polymorphismType ) );
-			if ( StringHelper.isNotEmpty( where ) ) rootClass.setWhere( where );
+
+			if ( StringHelper.isNotEmpty( where ) ) {
+				rootClass.setWhere( where );
+			}
+
 			if ( cacheConcurrentStrategy != null ) {
 				rootClass.setCacheConcurrencyStrategy( cacheConcurrentStrategy );
 				rootClass.setCacheRegionName( cacheRegion );
 				rootClass.setLazyPropertiesCacheable( cacheLazyProperty );
 			}
+
 			rootClass.setNaturalIdCacheRegionName( naturalIdCacheRegion );
+
 			boolean forceDiscriminatorInSelects = forceDiscriminator == null
 					? context.getBuildingOptions().shouldImplicitlyForceDiscriminatorInSelect()
 					: forceDiscriminator;
+
 			rootClass.setForceDiscriminator( forceDiscriminatorInSelects );
-			if( insertableDiscriminator != null) {
+
+			if ( insertableDiscriminator != null ) {
 				rootClass.setDiscriminatorInsertable( insertableDiscriminator );
 			}
 		}
@@ -303,6 +315,9 @@ public class EntityBinder {
 				LOG.immutableAnnotationOnNonRoot(annotatedClass.getName());
 			}
 		}
+
+		persistentClass.setCached( isCached );
+
 		persistentClass.setOptimisticLockStyle( getVersioning( optimisticLockType ) );
 		persistentClass.setSelectBeforeUpdate( selectBeforeUpdate );
 
@@ -537,6 +552,169 @@ public class EntityBinder {
 		this.wrapIdsInEmbeddedComponents = wrapIdsInEmbeddedComponents;
 	}
 
+	public void applyCaching(
+			XClass clazzToProcess,
+			SharedCacheMode sharedCacheMode,
+			MetadataBuildingContext context) {
+		final Cache explicitCacheAnn = clazzToProcess.getAnnotation( Cache.class );
+		final Cacheable explicitCacheableAnn = clazzToProcess.getAnnotation( Cacheable.class );
+
+		isCached = false;
+		cacheConcurrentStrategy = null;
+		cacheRegion = null;
+		cacheLazyProperty = true;
+
+		if ( persistentClass instanceof RootClass ) {
+			Cache effectiveCacheAnn = explicitCacheAnn;
+
+			if ( explicitCacheAnn != null ) {
+				// preserve legacy behavior of circumventing SharedCacheMode when Hibernate's @Cache is used.
+				isCached = true;
+			}
+			else {
+				effectiveCacheAnn = buildCacheMock( clazzToProcess.getName(), context );
+
+				switch ( sharedCacheMode ) {
+					case ALL: {
+						// all entities should be cached
+						isCached = true;
+						break;
+					}
+					case ENABLE_SELECTIVE: {
+						if ( explicitCacheableAnn != null && explicitCacheableAnn.value() ) {
+							isCached = true;
+						}
+						break;
+					}
+					case DISABLE_SELECTIVE: {
+						if ( explicitCacheableAnn == null || explicitCacheableAnn.value() ) {
+							isCached = true;
+						}
+						break;
+					}
+					default: {
+						// treat both NONE and UNSPECIFIED the same
+						isCached = false;
+						break;
+					}
+				}
+			}
+
+			cacheConcurrentStrategy = resolveCacheConcurrencyStrategy( effectiveCacheAnn.usage() );
+			cacheRegion = effectiveCacheAnn.region();
+			switch ( effectiveCacheAnn.include().toLowerCase( Locale.ROOT ) ) {
+				case "all": {
+					cacheLazyProperty = true;
+					break;
+				}
+				case "non-lazy": {
+					cacheLazyProperty = false;
+					break;
+				}
+				default: {
+					throw new AnnotationException(
+							"Unknown @Cache.include value [" + effectiveCacheAnn.include() + "] : "
+									+ annotatedClass.getName()
+					);
+				}
+			}
+		}
+		else {
+			if ( explicitCacheAnn != null ) {
+				LOG.cacheOrCacheableAnnotationOnNonRoot( persistentClass.getClassName() );
+			}
+			else if ( explicitCacheableAnn == null && persistentClass.getSuperclass() != null ) {
+				// we should inherit our super's caching config
+				isCached = persistentClass.getSuperclass().isCached();
+			}
+			else {
+				switch ( sharedCacheMode ) {
+					case ALL: {
+						// all entities should be cached
+						isCached = true;
+						break;
+					}
+					case ENABLE_SELECTIVE: {
+						// only entities with @Cacheable(true) should be cached
+						if ( explicitCacheableAnn != null && explicitCacheableAnn.value() ) {
+							isCached = true;
+						}
+						break;
+					}
+					case DISABLE_SELECTIVE: {
+						if ( explicitCacheableAnn == null || !explicitCacheableAnn.value() ) {
+							isCached = true;
+						}
+						break;
+					}
+					default: {
+						// treat both NONE and UNSPECIFIED the same
+						isCached = false;
+						break;
+					}
+				}
+			}
+		}
+
+		naturalIdCacheRegion = null;
+
+		final NaturalIdCache naturalIdCacheAnn = clazzToProcess.getAnnotation( NaturalIdCache.class );
+		if ( naturalIdCacheAnn != null ) {
+			if ( BinderHelper.isEmptyAnnotationValue( naturalIdCacheAnn.region() ) ) {
+				if ( explicitCacheAnn != null && StringHelper.isNotEmpty( explicitCacheAnn.region() ) ) {
+					naturalIdCacheRegion = explicitCacheAnn.region() + NATURAL_ID_CACHE_SUFFIX;
+				}
+				else {
+					naturalIdCacheRegion = clazzToProcess.getName() + NATURAL_ID_CACHE_SUFFIX;
+				}
+			}
+			else {
+				naturalIdCacheRegion = naturalIdCacheAnn.region();
+			}
+		}
+	}
+
+	private static String resolveCacheConcurrencyStrategy(CacheConcurrencyStrategy strategy) {
+		final org.hibernate.cache.spi.access.AccessType accessType = strategy.toAccessType();
+		return accessType == null ? null : accessType.getExternalName();
+	}
+
+	private static Cache buildCacheMock(String region, MetadataBuildingContext context) {
+		return new LocalCacheAnnotationStub( region, determineCacheConcurrencyStrategy( context ) );
+	}
+
+	@SuppressWarnings({ "ClassExplicitlyAnnotation" })
+	private static class LocalCacheAnnotationStub implements Cache {
+		private final String region;
+		private final CacheConcurrencyStrategy usage;
+
+		private LocalCacheAnnotationStub(String region, CacheConcurrencyStrategy usage) {
+			this.region = region;
+			this.usage = usage;
+		}
+
+		public CacheConcurrencyStrategy usage() {
+			return usage;
+		}
+
+		public String region() {
+			return region;
+		}
+
+		public String include() {
+			return "all";
+		}
+
+		public Class<? extends Annotation> annotationType() {
+			return Cache.class;
+		}
+	}
+
+	private static CacheConcurrencyStrategy determineCacheConcurrencyStrategy(MetadataBuildingContext context) {
+		return CacheConcurrencyStrategy.fromAccessType(
+				context.getBuildingOptions().getImplicitCacheAccessType()
+		);
+	}
 
 	private static class EntityTableObjectNameSource implements ObjectNameSource {
 		private final String explicitName;
@@ -697,8 +875,8 @@ public class EntityBinder {
 
 	public void finalSecondaryTableBinding(PropertyHolder propertyHolder) {
 		/*
-		 * Those operations has to be done afterQuery the id definition of the persistence class.
-		 * ie afterQuery the properties parsing
+		 * Those operations has to be done after the id definition of the persistence class.
+		 * ie after the properties parsing
 		 */
 		Iterator joins = secondaryTables.values().iterator();
 		Iterator joinColumns = secondaryTableJoins.values().iterator();
@@ -1037,48 +1215,6 @@ public class EntityBinder {
 
 	public java.util.Map<String, Join> getSecondaryTables() {
 		return secondaryTables;
-	}
-
-	public void setCache(Cache cacheAnn) {
-		if ( cacheAnn != null ) {
-			cacheRegion = BinderHelper.isEmptyAnnotationValue( cacheAnn.region() ) ?
-					null :
-					cacheAnn.region();
-			cacheConcurrentStrategy = getCacheConcurrencyStrategy( cacheAnn.usage() );
-			if ( "all".equalsIgnoreCase( cacheAnn.include() ) ) {
-				cacheLazyProperty = true;
-			}
-			else if ( "non-lazy".equalsIgnoreCase( cacheAnn.include() ) ) {
-				cacheLazyProperty = false;
-			}
-			else {
-				throw new AnnotationException( "Unknown lazy property annotations: " + cacheAnn.include() );
-			}
-		}
-		else {
-			cacheConcurrentStrategy = null;
-			cacheRegion = null;
-			cacheLazyProperty = true;
-		}
-	}
-	
-	public void setNaturalIdCache(XClass clazzToProcess, NaturalIdCache naturalIdCacheAnn) {
-		if ( naturalIdCacheAnn != null ) {
-			if ( BinderHelper.isEmptyAnnotationValue( naturalIdCacheAnn.region() ) ) {
-				if (cacheRegion != null) {
-					naturalIdCacheRegion = cacheRegion + NATURAL_ID_CACHE_SUFFIX;
-				}
-				else {
-					naturalIdCacheRegion = clazzToProcess.getName() + NATURAL_ID_CACHE_SUFFIX;
-				}
-			}
-			else {
-				naturalIdCacheRegion = naturalIdCacheAnn.region();
-			}
-		}
-		else {
-			naturalIdCacheRegion = null;
-		}
 	}
 
 	public static String getCacheConcurrencyStrategy(CacheConcurrencyStrategy strategy) {

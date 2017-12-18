@@ -13,12 +13,16 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
+import javax.persistence.ElementCollection;
 import javax.persistence.JoinColumn;
+import javax.persistence.Lob;
 import javax.persistence.MapKey;
 import javax.persistence.OneToMany;
 import javax.persistence.Version;
 
+import org.hibernate.HibernateException;
 import org.hibernate.MappingException;
 import org.hibernate.annotations.common.reflection.ClassLoadingException;
 import org.hibernate.annotations.common.reflection.ReflectionManager;
@@ -35,6 +39,7 @@ import org.hibernate.envers.NotAudited;
 import org.hibernate.envers.RelationTargetAuditMode;
 import org.hibernate.envers.configuration.internal.GlobalConfiguration;
 import org.hibernate.envers.configuration.internal.metadata.MetadataTools;
+import org.hibernate.envers.internal.EnversMessageLogger;
 import org.hibernate.envers.internal.tools.MappingTools;
 import org.hibernate.envers.internal.tools.ReflectionTools;
 import org.hibernate.envers.internal.tools.StringTools;
@@ -42,6 +47,7 @@ import org.hibernate.loader.PropertyPath;
 import org.hibernate.mapping.Component;
 import org.hibernate.mapping.Property;
 import org.hibernate.mapping.Value;
+import org.jboss.logging.Logger;
 
 import static org.hibernate.envers.internal.tools.Tools.newHashMap;
 import static org.hibernate.envers.internal.tools.Tools.newHashSet;
@@ -58,6 +64,11 @@ import static org.hibernate.envers.internal.tools.Tools.newHashSet;
  * @author Lukasz Zuchowski (author at zuchos dot com)
  */
 public class AuditedPropertiesReader {
+	private static final EnversMessageLogger LOG = Logger.getMessageLogger(
+			EnversMessageLogger.class,
+			AuditedPropertiesReader.class.getName()
+	);
+
 	protected final ModificationStore defaultStore;
 	private final PersistentPropertiesSource persistentPropertiesSource;
 	private final AuditedPropertiesHolder auditedPropertiesHolder;
@@ -65,7 +76,7 @@ public class AuditedPropertiesReader {
 	private final ReflectionManager reflectionManager;
 	private final String propertyNamePrefix;
 
-	private final Set<String> propertyAccessedPersistentProperties;
+	private final Map<String, String> propertyAccessedPersistentProperties;
 	private final Set<String> fieldAccessedPersistentProperties;
 	// Mapping class field to corresponding <properties> element.
 	private final Map<String, String> propertiesGroupMapping;
@@ -90,7 +101,7 @@ public class AuditedPropertiesReader {
 		this.reflectionManager = reflectionManager;
 		this.propertyNamePrefix = propertyNamePrefix;
 
-		propertyAccessedPersistentProperties = newHashSet();
+		propertyAccessedPersistentProperties = newHashMap();
 		fieldAccessedPersistentProperties = newHashSet();
 		propertiesGroupMapping = newHashMap();
 
@@ -258,7 +269,7 @@ public class AuditedPropertiesReader {
 			fieldAccessedPersistentProperties.add( property.getName() );
 		}
 		else {
-			propertyAccessedPersistentProperties.add( property.getName() );
+			propertyAccessedPersistentProperties.put( property.getName(), property.getPropertyAccessorName() );
 		}
 	}
 
@@ -304,11 +315,14 @@ public class AuditedPropertiesReader {
 		Audited audited = computeAuditConfiguration( dynamicComponentSource.getXClass() );
 		if ( !fieldAccessedPersistentProperties.isEmpty() ) {
 			throw new MappingException(
-					"Audited dynamic component cannot have properties with access=\"field\" for properties: " + fieldAccessedPersistentProperties + ". \n Change properties access=\"property\", to make it work)"
+					"Audited dynamic component cannot have properties with access=\"field\" for properties: " +
+							fieldAccessedPersistentProperties +
+							". \n Change properties access=\"property\", to make it work)"
 			);
 		}
-		for ( String property : propertyAccessedPersistentProperties ) {
-			String accessType = AccessType.PROPERTY.getType();
+		for ( Map.Entry<String, String> entry : propertyAccessedPersistentProperties.entrySet() ) {
+			String property = entry.getKey();
+			String accessType = entry.getValue();
 			if ( !auditedPropertiesHolder.contains( property ) ) {
 				final Value propertyValue = persistentPropertiesSource.getProperty( property ).getValue();
 				if ( propertyValue instanceof Component ) {
@@ -341,14 +355,14 @@ public class AuditedPropertiesReader {
 		//look in the class
 		addFromProperties(
 				clazz.getDeclaredProperties( "field" ),
-				"field",
+				it -> "field",
 				fieldAccessedPersistentProperties,
 				allClassAudited
 		);
 		addFromProperties(
 				clazz.getDeclaredProperties( "property" ),
-				"property",
-				propertyAccessedPersistentProperties,
+				propertyAccessedPersistentProperties::get,
+				propertyAccessedPersistentProperties.keySet(),
 				allClassAudited
 		);
 
@@ -362,10 +376,12 @@ public class AuditedPropertiesReader {
 
 	private void addFromProperties(
 			Iterable<XProperty> properties,
-			String accessType,
+			Function<String, String> accessTypeProvider,
 			Set<String> persistentProperties,
 			Audited allClassAudited) {
 		for ( XProperty property : properties ) {
+			final String accessType = accessTypeProvider.apply( property.getName() );
+
 			// If this is not a persistent property, with the same access type as currently checked,
 			// it's not audited as well.
 			// If the property was already defined by the subclass, is ignored by superclasses
@@ -507,6 +523,8 @@ public class AuditedPropertiesReader {
 			return false;
 		}
 
+		validateLobMappingSupport( property );
+
 		propertyData.setName( propertyName );
 		propertyData.setBeanName( property.getName() );
 		propertyData.setAccessType( accessType );
@@ -524,6 +542,30 @@ public class AuditedPropertiesReader {
 		return true;
 	}
 
+	private void validateLobMappingSupport(XProperty property) {
+		// HHH-9834 - Sanity check
+		try {
+			if ( property.isAnnotationPresent( ElementCollection.class ) ) {
+				if ( property.isAnnotationPresent( Lob.class ) ) {
+					if ( !property.getCollectionClass().isAssignableFrom( Map.class ) ) {
+						throw new MappingException(
+								"@ElementCollection combined with @Lob is only supported for Map collection types."
+						);
+					}
+				}
+			}
+		}
+		catch ( MappingException e ) {
+			throw new HibernateException(
+					String.format(
+							"Invalid mapping in [%s] for property [%s]",
+							property.getDeclaringClass().getName(),
+							property.getName()
+					),
+					e
+			);
+		}
+	}
 
 	protected boolean checkAudited(
 			XProperty property,

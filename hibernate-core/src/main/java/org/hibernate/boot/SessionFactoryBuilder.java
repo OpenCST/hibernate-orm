@@ -6,8 +6,6 @@
  */
 package org.hibernate.boot;
 
-import java.util.Map;
-
 import org.hibernate.ConnectionReleaseMode;
 import org.hibernate.CustomEntityDirtinessStrategy;
 import org.hibernate.EntityMode;
@@ -21,12 +19,16 @@ import org.hibernate.cache.spi.QueryCacheFactory;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.dialect.function.SQLFunction;
 import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
+import org.hibernate.jpa.JpaCompliance;
 import org.hibernate.loader.BatchFetchStyle;
 import org.hibernate.proxy.EntityNotFoundDelegate;
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.hibernate.tuple.entity.EntityTuplizer;
 import org.hibernate.tuple.entity.EntityTuplizerFactory;
+
+import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The contract for building a {@link org.hibernate.SessionFactory} given a number of options.
@@ -138,6 +140,19 @@ public interface SessionFactoryBuilder {
 	 * @see org.hibernate.cfg.AvailableSettings#SESSION_SCOPED_INTERCEPTOR
 	 */
 	SessionFactoryBuilder applyStatelessInterceptor(Class<? extends Interceptor> statelessInterceptorClass);
+
+	/**
+	 * Names a {@link Supplier} instance which is used to retrieve the interceptor to be applied to the SessionFactory,
+	 * which in turn means it will be used by all Sessions unless one is explicitly specified in
+	 * {@link org.hibernate.SessionBuilder#interceptor}
+	 *
+	 * @param statelessInterceptorSupplier {@link Supplier} instance which is used to retrieve the interceptor
+	 *
+	 * @return {@code this}, for method chaining
+	 *
+	 * @see org.hibernate.cfg.AvailableSettings#SESSION_SCOPED_INTERCEPTOR
+	 */
+	SessionFactoryBuilder applyStatelessInterceptor(Supplier<? extends Interceptor> statelessInterceptorSupplier);
 
 	/**
 	 * Names a StatementInspector to be applied to the SessionFactory, which in turn means it will be used by all
@@ -664,6 +679,13 @@ public interface SessionFactoryBuilder {
 	SessionFactoryBuilder applyConnectionReleaseMode(ConnectionReleaseMode connectionReleaseMode);
 
 	/**
+	 * @see org.hibernate.cfg.AvailableSettings#CONNECTION_PROVIDER_DISABLES_AUTOCOMMIT
+	 */
+	default SessionFactoryBuilder applyConnectionProviderDisablesAutoCommit(boolean providerDisablesAutoCommit) {
+		return this;
+	}
+
+	/**
 	 * Should Hibernate apply comments to SQL it generates?
 	 *
 	 * @param enabled {@code true} indicates comments should be applied; {@code false} indicates not.
@@ -686,6 +708,38 @@ public interface SessionFactoryBuilder {
 	 * @return {@code this}, for method chaining
 	 */
 	SessionFactoryBuilder applySqlFunction(String registrationName, SQLFunction sqlFunction);
+
+	SessionFactoryBuilder allowOutOfTransactionUpdateOperations(boolean allow);
+
+	/**
+	 * Should resources held by {@link javax.persistence.EntityManager} instance be released immediately on close?
+	 * <p/>
+	 * The other option is to release them as part of an after-transaction callback.
+	 *
+	 */
+	SessionFactoryBuilder enableReleaseResourcesOnCloseEnabled(boolean enable);
+
+
+	/**
+	 * @see JpaCompliance#isJpaQueryComplianceEnabled()
+	 */
+	SessionFactoryBuilder enableJpaQueryCompliance(boolean enabled);
+
+	/**
+	 * @see JpaCompliance#isJpaTransactionComplianceEnabled()
+	 */
+	SessionFactoryBuilder enableJpaTransactionCompliance(boolean enabled);
+
+	/**
+	 * @see JpaCompliance#isJpaListComplianceEnabled()
+	 */
+	SessionFactoryBuilder enableJpaListCompliance(boolean enabled);
+
+	/**
+	 * @see JpaCompliance#isJpaClosedComplianceEnabled()
+	 */
+	SessionFactoryBuilder enableJpaClosedCompliance(boolean enabled);
+
 
 	/**
 	 * Allows unwrapping this builder as another, more specific type.

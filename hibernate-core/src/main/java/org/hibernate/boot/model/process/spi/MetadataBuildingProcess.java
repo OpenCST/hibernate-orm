@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 
+import org.hibernate.boot.AttributeConverterInfo;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.internal.ClassLoaderAccessImpl;
 import org.hibernate.boot.internal.InFlightMetadataCollectorImpl;
@@ -114,9 +115,6 @@ public class MetadataBuildingProcess {
 				options,
 				new TypeResolver( basicTypeRegistry, new TypeFactory() )
 		);
-		for ( AttributeConverterDefinition attributeConverterDefinition : managedResources.getAttributeConverterDefinitions() ) {
-			metadataCollector.addAttributeConverter( attributeConverterDefinition );
-		}
 
 		final ClassLoaderService classLoaderService = options.getServiceRegistry().getService( ClassLoaderService.class );
 
@@ -131,11 +129,17 @@ public class MetadataBuildingProcess {
 				metadataCollector
 		);
 
+		for ( AttributeConverterInfo converterInfo : managedResources.getAttributeConverterDefinitions() ) {
+			metadataCollector.addAttributeConverter(
+					converterInfo.toConverterDescriptor( rootMetadataBuildingContext )
+			);
+		}
+
 		final IndexView jandexView = options.getJandexView();
 
 		// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 		// Set up the processors and start binding
-		//		NOTE : this becomes even more simplified afterQuery we move purely
+		//		NOTE : this becomes even more simplified after we move purely
 		// 		to unified model
 
 		final MetadataSourceProcessor processor = new MetadataSourceProcessor() {

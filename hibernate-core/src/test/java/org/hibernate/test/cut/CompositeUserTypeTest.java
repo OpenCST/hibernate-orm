@@ -5,10 +5,6 @@
  * See the lgpl.txt file in the root directory or <http://www.gnu.org/licenses/lgpl-2.1.html>.
  */
 package org.hibernate.test.cut;
-import javax.persistence.PersistenceException;
-
-import static org.hibernate.testing.junit4.ExtraAssertions.assertTyping;
-import static org.junit.Assert.assertEquals;
 
 import java.math.BigDecimal;
 import java.util.Currency;
@@ -25,10 +21,12 @@ import org.hibernate.hql.internal.ast.QuerySyntaxException;
 import org.hibernate.testing.DialectChecks;
 import org.hibernate.testing.RequiresDialectFeature;
 import org.hibernate.testing.SkipForDialect;
-import org.hibernate.testing.SkipForDialects;
 import org.hibernate.testing.TestForIssue;
 import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
 import org.junit.Test;
+
+import static org.hibernate.testing.junit4.ExtraAssertions.assertTyping;
+import static org.junit.Assert.assertEquals;
 
 /**
  * @author Gavin King
@@ -71,9 +69,8 @@ public class CompositeUserTypeTest extends BaseCoreFunctionalTestCase {
 	}
 	
 	@Test
-    @SkipForDialects( {
-    		@SkipForDialect ( value = { SybaseASE15Dialect.class }, jiraKey = "HHH-6788" ),
-    		@SkipForDialect ( value = { DB2Dialect.class }, jiraKey = "HHH-6867" ) } )
+	@SkipForDialect ( value = { SybaseASE15Dialect.class }, jiraKey = "HHH-6788" )
+	@SkipForDialect ( value = { DB2Dialect.class }, jiraKey = "HHH-6867" )
 	public void testCustomColumnReadAndWrite() {
 		Session s = openSession();
 		org.hibernate.Transaction t = s.beginTransaction();
@@ -100,9 +97,9 @@ public class CompositeUserTypeTest extends BaseCoreFunctionalTestCase {
 		assertEquals(AMOUNT.doubleValue(), f.getHoldings().getAmount().doubleValue(), 0.01d);
 		
 		// Test predicate and entity load via HQL
-		f = (MutualFund)s.createQuery("from MutualFund f where f.holdings.amount between ? and ?")
-			.setBigDecimal(0, AMOUNT.subtract(one))
-			.setBigDecimal(1, AMOUNT.add(one))
+		f = (MutualFund)s.createQuery("from MutualFund f where f.holdings.amount between ?1 and ?2")
+			.setBigDecimal(1, AMOUNT.subtract(one))
+			.setBigDecimal(2, AMOUNT.add(one))
 			.uniqueResult();
 		assertEquals(AMOUNT.doubleValue(), f.getHoldings().getAmount().doubleValue(), 0.01d);
 				

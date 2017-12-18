@@ -36,6 +36,10 @@ import org.hibernate.boot.CacheRegionDefinition;
 import org.hibernate.boot.SessionFactoryBuilder;
 import org.hibernate.boot.model.IdentifierGeneratorDefinition;
 import org.hibernate.boot.model.TypeDefinition;
+import org.hibernate.boot.model.convert.internal.AttributeConverterManager;
+import org.hibernate.boot.model.convert.internal.ClassBasedConverterDescriptor;
+import org.hibernate.boot.model.convert.internal.InstanceBasedConverterDescriptor;
+import org.hibernate.boot.model.convert.spi.ConverterDescriptor;
 import org.hibernate.boot.model.naming.Identifier;
 import org.hibernate.boot.model.naming.ImplicitForeignKeyNameSource;
 import org.hibernate.boot.model.naming.ImplicitIndexNameSource;
@@ -46,7 +50,7 @@ import org.hibernate.boot.model.relational.ExportableProducer;
 import org.hibernate.boot.model.relational.Namespace;
 import org.hibernate.boot.model.source.internal.ImplicitColumnNamingSecondPass;
 import org.hibernate.boot.model.source.spi.LocalMetadataBuildingContext;
-import org.hibernate.boot.spi.AttributeConverterAutoApplyHandler;
+import org.hibernate.boot.model.convert.spi.ConverterAutoApplyHandler;
 import org.hibernate.boot.spi.InFlightMetadataCollector;
 import org.hibernate.boot.spi.MetadataBuildingContext;
 import org.hibernate.boot.spi.MetadataBuildingOptions;
@@ -56,6 +60,7 @@ import org.hibernate.cfg.AttributeConverterDefinition;
 import org.hibernate.cfg.CopyIdentifierComponentSecondPass;
 import org.hibernate.cfg.CreateKeySecondPass;
 import org.hibernate.cfg.FkSecondPass;
+import org.hibernate.cfg.IdGeneratorResolverSecondPass;
 import org.hibernate.cfg.JPAIndexHolder;
 import org.hibernate.cfg.PkDrivenByDefaultMapsIdSecondPass;
 import org.hibernate.cfg.PropertyData;
@@ -345,22 +350,19 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 	// attribute converters
 
 	@Override
-	public void addAttributeConverter(AttributeConverterDefinition definition) {
+	public void addAttributeConverter(Class<? extends AttributeConverter> converterClass) {
 		attributeConverterManager.addConverter(
-				AttributeConverterDescriptorImpl.create(
-						definition,
-						classmateContext
-				)
+				new ClassBasedConverterDescriptor( converterClass, getClassmateContext() )
 		);
 	}
 
 	@Override
-	public void addAttributeConverter(Class<? extends AttributeConverter> converterClass) {
-		addAttributeConverter( AttributeConverterDefinition.from( converterClass ) );
+	public void addAttributeConverter(ConverterDescriptor descriptor) {
+		attributeConverterManager.addConverter( descriptor );
 	}
 
 	@Override
-	public AttributeConverterAutoApplyHandler getAttributeConverterAutoApplyHandler() {
+	public ConverterAutoApplyHandler getAttributeConverterAutoApplyHandler() {
 		return attributeConverterManager;
 	}
 
@@ -441,10 +443,12 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 		if ( defaultIdentifierGeneratorNames.contains( generator.getName() ) ) {
 			return;
 		}
-
 		final IdentifierGeneratorDefinition old = idGeneratorDefinitionMap.put( generator.getName(), generator );
 		if ( old != null ) {
-			log.duplicateGeneratorName( old.getName() );
+			if ( !old.equals( generator ) ) {
+				throw new IllegalArgumentException( "Duplicate generator name " + old.getName() );
+			}
+//			log.duplicateGeneratorName( old.getName() );
 		}
 	}
 
@@ -1442,6 +1446,7 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 		}
 	}
 
+	private ArrayList<IdGeneratorResolverSecondPass> idGeneratorResolverSecondPassList;
 	private ArrayList<PkDrivenByDefaultMapsIdSecondPass> pkDrivenByDefaultMapsIdSecondPassList;
 	private ArrayList<SetSimpleValueTypeSecondPass> setSimpleValueTypeSecondPassList;
 	private ArrayList<CopyIdentifierComponentSecondPass> copyIdentifierComponentSecondPasList;
@@ -1460,7 +1465,10 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 
 	@Override
 	public void addSecondPass(SecondPass secondPass, boolean onTopOfTheQueue) {
-		if ( secondPass instanceof PkDrivenByDefaultMapsIdSecondPass ) {
+		if ( secondPass instanceof IdGeneratorResolverSecondPass ) {
+			addIdGeneratorResolverSecondPass( (IdGeneratorResolverSecondPass) secondPass, onTopOfTheQueue );
+		}
+		else if ( secondPass instanceof PkDrivenByDefaultMapsIdSecondPass ) {
 			addPkDrivenByDefaultMapsIdSecondPass( (PkDrivenByDefaultMapsIdSecondPass) secondPass, onTopOfTheQueue );
 		}
 		else if ( secondPass instanceof SetSimpleValueTypeSecondPass ) {
@@ -1518,6 +1526,13 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 		addSecondPass( secondPass, setSimpleValueTypeSecondPassList, onTopOfTheQueue );
 	}
 
+	private void addIdGeneratorResolverSecondPass(IdGeneratorResolverSecondPass secondPass, boolean onTopOfTheQueue) {
+		if ( idGeneratorResolverSecondPassList == null ) {
+			idGeneratorResolverSecondPassList = new ArrayList<>();
+		}
+		addSecondPass( secondPass, idGeneratorResolverSecondPassList, onTopOfTheQueue );
+	}
+
 	private void addCopyIdentifierComponentSecondPass(
 			CopyIdentifierComponentSecondPass secondPass,
 			boolean onTopOfTheQueue) {
@@ -1567,14 +1582,14 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 
 
 	/**
-	 * Ugh!  But we need this done beforeQuery we ask Envers to produce its entities.
+	 * Ugh!  But we need this done before we ask Envers to produce its entities.
 	 */
 	public void processSecondPasses(MetadataBuildingContext buildingContext) {
 		inSecondPass = true;
 
 		try {
+			processSecondPasses( idGeneratorResolverSecondPassList );
 			processSecondPasses( implicitColumnNamingSecondPassList );
-
 			processSecondPasses( pkDrivenByDefaultMapsIdSecondPassList );
 			processSecondPasses( setSimpleValueTypeSecondPassList );
 
@@ -1811,45 +1826,49 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 
 				fk.setReferencedTable( referencedClass.getTable() );
 
-				// todo : should we apply a physical naming too?
-				if ( fk.getName() == null ) {
-					final Identifier nameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineForeignKeyName(
-							new ImplicitForeignKeyNameSource() {
-								final List<Identifier> columnNames = extractColumnNames( fk.getColumns() );
-								List<Identifier> referencedColumnNames = null;
+				Identifier nameIdentifier;
 
-								@Override
-								public Identifier getTableName() {
-									return table.getNameIdentifier();
-								}
+				ImplicitForeignKeyNameSource foreignKeyNameSource = new ImplicitForeignKeyNameSource() {
+					final List<Identifier> columnNames = extractColumnNames( fk.getColumns() );
+					List<Identifier> referencedColumnNames = null;
 
-								@Override
-								public List<Identifier> getColumnNames() {
-									return columnNames;
-								}
+					@Override
+					public Identifier getTableName() {
+						return table.getNameIdentifier();
+					}
 
-								@Override
-								public Identifier getReferencedTableName() {
-									return fk.getReferencedTable().getNameIdentifier();
-								}
+					@Override
+					public List<Identifier> getColumnNames() {
+						return columnNames;
+					}
 
-								@Override
-								public List<Identifier> getReferencedColumnNames() {
-									if ( referencedColumnNames == null ) {
-										referencedColumnNames = extractColumnNames( fk.getReferencedColumns() );
-									}
-									return referencedColumnNames;
-								}
+					@Override
+					public Identifier getReferencedTableName() {
+						return fk.getReferencedTable().getNameIdentifier();
+					}
 
-								@Override
-								public MetadataBuildingContext getBuildingContext() {
-									return buildingContext;
-								}
-							}
-					);
+					@Override
+					public List<Identifier> getReferencedColumnNames() {
+						if ( referencedColumnNames == null ) {
+							referencedColumnNames = extractColumnNames( fk.getReferencedColumns() );
+						}
+						return referencedColumnNames;
+					}
 
-					fk.setName( nameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() ) );
-				}
+					@Override
+					public Identifier getUserProvidedIdentifier() {
+						return fk.getName() != null ? Identifier.toIdentifier( fk.getName() ) : null;
+					}
+
+					@Override
+					public MetadataBuildingContext getBuildingContext() {
+						return buildingContext;
+					}
+				};
+
+				nameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineForeignKeyName(foreignKeyNameSource);
+
+				fk.setName( nameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() ) );
 
 				fk.alignColumns();
 			}
@@ -1959,34 +1978,39 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 			}
 		}
 
+		final String originalKeyName = keyName;
+
 		if ( unique ) {
-			if ( StringHelper.isEmpty( keyName ) ) {
-				final Identifier keyNameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineUniqueKeyName(
-						new ImplicitUniqueKeyNameSource() {
-							@Override
-							public MetadataBuildingContext getBuildingContext() {
-								return buildingContext;
-							}
+			final Identifier keyNameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineUniqueKeyName(
+				new ImplicitUniqueKeyNameSource() {
+					@Override
+					public MetadataBuildingContext getBuildingContext() {
+						return buildingContext;
+					}
 
-							@Override
-							public Identifier getTableName() {
-								return table.getNameIdentifier();
-							}
+					@Override
+					public Identifier getTableName() {
+						return table.getNameIdentifier();
+					}
 
-							private List<Identifier> columnNameIdentifiers;
+					private List<Identifier> columnNameIdentifiers;
 
-							@Override
-							public List<Identifier> getColumnNames() {
-								// be lazy about building these
-								if ( columnNameIdentifiers == null ) {
-									columnNameIdentifiers = toIdentifiers( columnNames );
-								}
-								return columnNameIdentifiers;
-							}
+					@Override
+					public List<Identifier> getColumnNames() {
+						// be lazy about building these
+						if ( columnNameIdentifiers == null ) {
+							columnNameIdentifiers = toIdentifiers( columnNames );
 						}
-				);
-				keyName = keyNameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() );
-			}
+						return columnNameIdentifiers;
+					}
+
+					@Override
+					public Identifier getUserProvidedIdentifier() {
+						return originalKeyName != null ? Identifier.toIdentifier( originalKeyName ) : null;
+					}
+				}
+			);
+			keyName = keyNameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() );
 
 			UniqueKey uk = table.getOrCreateUniqueKey( keyName );
 			for ( int i = 0; i < columns.length; i++ ) {
@@ -1999,33 +2023,36 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 			}
 		}
 		else {
-			if ( StringHelper.isEmpty( keyName ) ) {
-				final Identifier keyNameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineIndexName(
-						new ImplicitIndexNameSource() {
-							@Override
-							public MetadataBuildingContext getBuildingContext() {
-								return buildingContext;
-							}
+			final Identifier keyNameIdentifier = getMetadataBuildingOptions().getImplicitNamingStrategy().determineIndexName(
+				new ImplicitIndexNameSource() {
+					@Override
+					public MetadataBuildingContext getBuildingContext() {
+						return buildingContext;
+					}
 
-							@Override
-							public Identifier getTableName() {
-								return table.getNameIdentifier();
-							}
+					@Override
+					public Identifier getTableName() {
+						return table.getNameIdentifier();
+					}
 
-							private List<Identifier> columnNameIdentifiers;
+					private List<Identifier> columnNameIdentifiers;
 
-							@Override
-							public List<Identifier> getColumnNames() {
-								// be lazy about building these
-								if ( columnNameIdentifiers == null ) {
-									columnNameIdentifiers = toIdentifiers( columnNames );
-								}
-								return columnNameIdentifiers;
-							}
+					@Override
+					public List<Identifier> getColumnNames() {
+						// be lazy about building these
+						if ( columnNameIdentifiers == null ) {
+							columnNameIdentifiers = toIdentifiers( columnNames );
 						}
-				);
-				keyName = keyNameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() );
-			}
+						return columnNameIdentifiers;
+					}
+
+					@Override
+					public Identifier getUserProvidedIdentifier() {
+						return originalKeyName != null ? Identifier.toIdentifier( originalKeyName ) : null;
+					}
+				}
+			);
+			keyName = keyNameIdentifier.render( getDatabase().getJdbcEnvironment().getDialect() );
 
 			Index index = table.getOrCreateIndex( keyName );
 			for ( int i = 0; i < columns.length; i++ ) {
@@ -2039,7 +2066,13 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 		}
 
 		if ( unbound.size() > 0 || unboundNoLogical.size() > 0 ) {
-			StringBuilder sb = new StringBuilder( "Unable to create unique key constraint (" );
+			StringBuilder sb = new StringBuilder( "Unable to create " );
+			if ( unique ) {
+				sb.append( "unique key constraint (" );
+			}
+			else {
+				sb.append( "index (" );
+			}
 			for ( String columnName : columnNames ) {
 				sb.append( columnName ).append( ", " );
 			}
@@ -2128,6 +2161,7 @@ public class InFlightMetadataCollectorImpl implements InFlightMetadataCollector 
 							"Cache override referenced a non-root entity : " + cacheRegionDefinition.getRole()
 					);
 				}
+				entityBinding.setCached( true );
 				( (RootClass) entityBinding ).setCacheRegionName( cacheRegionDefinition.getRegion() );
 				( (RootClass) entityBinding ).setCacheConcurrencyStrategy( cacheRegionDefinition.getUsage() );
 				( (RootClass) entityBinding ).setLazyPropertiesCacheable( cacheRegionDefinition.isCacheLazy() );

@@ -13,6 +13,7 @@ import javax.persistence.ElementCollection;
 import javax.persistence.Entity;
 import javax.persistence.GeneratedValue;
 import javax.persistence.Id;
+import javax.persistence.Table;
 import javax.persistence.Version;
 
 import org.hibernate.Session;
@@ -20,6 +21,9 @@ import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.cfg.AvailableSettings;
+import org.hibernate.cfg.Environment;
+import org.hibernate.dialect.Dialect;
+import org.hibernate.dialect.H2Dialect;
 
 import org.hibernate.testing.TestForIssue;
 import org.hibernate.testing.junit4.BaseNonConfigCoreFunctionalTestCase;
@@ -47,6 +51,9 @@ public class RefreshUpdatedDataTest extends BaseNonConfigCoreFunctionalTestCase 
 	@SuppressWarnings("unchecked")
 	protected void addSettings(Map settings) {
 		super.addSettings( settings );
+		if ( H2Dialect.class.equals( Dialect.getDialect().getClass() ) ) {
+			settings.put( Environment.URL, "jdbc:h2:mem:db-mvcc;MVCC=true" );
+		}
 		settings.put( AvailableSettings.GENERATE_STATISTICS, "true" );
 	}
 
@@ -167,6 +174,7 @@ public class RefreshUpdatedDataTest extends BaseNonConfigCoreFunctionalTestCase 
 	}
 
 	@Entity(name = "ReadWriteCacheableItem")
+	@Table(name = "RW_ITEM")
 	@Cache(usage = CacheConcurrencyStrategy.READ_WRITE, region = "item")
 	public static class ReadWriteCacheableItem {
 
@@ -209,6 +217,7 @@ public class RefreshUpdatedDataTest extends BaseNonConfigCoreFunctionalTestCase 
 	}
 
 	@Entity(name = "ReadWriteVersionedCacheableItem")
+	@Table(name = "RW_VERSIONED_ITEM")
 	@Cache(usage = CacheConcurrencyStrategy.READ_WRITE, region = "item")
 	public static class ReadWriteVersionedCacheableItem {
 
@@ -254,6 +263,7 @@ public class RefreshUpdatedDataTest extends BaseNonConfigCoreFunctionalTestCase 
 	}
 
 	@Entity(name = "NonStrictReadWriteCacheableItem")
+	@Table(name = "RW_NOSTRICT_ITEM")
 	@Cache(usage = CacheConcurrencyStrategy.NONSTRICT_READ_WRITE, region = "item")
 	public static class NonStrictReadWriteCacheableItem {
 
@@ -296,6 +306,7 @@ public class RefreshUpdatedDataTest extends BaseNonConfigCoreFunctionalTestCase 
 	}
 
 	@Entity(name = "NonStrictReadWriteVersionedCacheableItem")
+	@Table(name = "RW_NOSTRICT_VER_ITEM")
 	@Cache(usage = CacheConcurrencyStrategy.NONSTRICT_READ_WRITE, region = "item")
 	public static class NonStrictReadWriteVersionedCacheableItem {
 

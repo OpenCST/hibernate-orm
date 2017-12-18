@@ -43,8 +43,6 @@ hibernate.connection.url @DB_URL@
 
 
 #hibernate.dialect org.hibernate.dialect.MySQLDialect
-#hibernate.dialect org.hibernate.dialect.MySQLInnoDBDialect
-#hibernate.dialect org.hibernate.dialect.MySQLMyISAMDialect
 #hibernate.connection.driver_class org.gjt.mm.mysql.Driver
 #hibernate.connection.driver_class com.mysql.jdbc.Driver
 #hibernate.connection.url jdbc:mysql:///test
@@ -211,6 +209,15 @@ hibernate.connection.url @DB_URL@
 #hibernate.connection.url jdbc:mimer:multi1
 #hibernate.connection.username hibernate
 #hibernate.connection.password hibernate
+
+
+## HANA
+
+#hibernate.dialect org.hibernate.dialect.HANAColumnStoreDialect
+#hibernate.connection.driver_class com.sap.db.jdbc.Driver
+#hibernate.connection.url jdbc:sap://localhost:30015
+#hibernate.connection.username HIBERNATE_TEST
+#hibernate.connection.password H1bernate_test
 
 
 

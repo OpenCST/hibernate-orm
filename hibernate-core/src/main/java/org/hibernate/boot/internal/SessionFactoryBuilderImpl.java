@@ -6,12 +6,15 @@
  */
 package org.hibernate.boot.internal;
 
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
+import java.util.function.Supplier;
 
 import org.hibernate.ConnectionAcquisitionMode;
 import org.hibernate.ConnectionReleaseMode;
@@ -19,6 +22,7 @@ import org.hibernate.CustomEntityDirtinessStrategy;
 import org.hibernate.EmptyInterceptor;
 import org.hibernate.EntityMode;
 import org.hibernate.EntityNameResolver;
+import org.hibernate.HibernateException;
 import org.hibernate.Interceptor;
 import org.hibernate.MultiTenancyStrategy;
 import org.hibernate.NullPrecedence;
@@ -48,8 +52,11 @@ import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
 import org.hibernate.internal.SessionFactoryImpl;
 import org.hibernate.internal.log.DeprecationLogger;
 import org.hibernate.internal.util.config.ConfigurationHelper;
+import org.hibernate.jpa.JpaCompliance;
+import org.hibernate.jpa.spi.JpaComplianceImpl;
 import org.hibernate.loader.BatchFetchStyle;
 import org.hibernate.proxy.EntityNotFoundDelegate;
+import org.hibernate.query.criteria.LiteralHandlingMode;
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.hibernate.resource.transaction.spi.TransactionCoordinatorBuilder;
@@ -61,6 +68,8 @@ import org.jboss.logging.Logger;
 
 import static org.hibernate.cfg.AvailableSettings.ACQUIRE_CONNECTIONS;
 import static org.hibernate.cfg.AvailableSettings.ALLOW_JTA_TRANSACTION_ACCESS;
+import static org.hibernate.cfg.AvailableSettings.ALLOW_REFRESH_DETACHED_ENTITY;
+import static org.hibernate.cfg.AvailableSettings.ALLOW_UPDATE_OUTSIDE_TRANSACTION;
 import static org.hibernate.cfg.AvailableSettings.AUTO_CLOSE_SESSION;
 import static org.hibernate.cfg.AvailableSettings.AUTO_EVICT_COLLECTION_CACHE;
 import static org.hibernate.cfg.AvailableSettings.AUTO_SESSION_EVENTS_LISTENER;
@@ -68,7 +77,10 @@ import static org.hibernate.cfg.AvailableSettings.BATCH_FETCH_STYLE;
 import static org.hibernate.cfg.AvailableSettings.BATCH_VERSIONED_DATA;
 import static org.hibernate.cfg.AvailableSettings.CACHE_REGION_PREFIX;
 import static org.hibernate.cfg.AvailableSettings.CHECK_NULLABILITY;
+import static org.hibernate.cfg.AvailableSettings.COLLECTION_JOIN_SUBQUERY;
 import static org.hibernate.cfg.AvailableSettings.CONNECTION_HANDLING;
+import static org.hibernate.cfg.AvailableSettings.CONVENTIONAL_JAVA_CONSTANTS;
+import static org.hibernate.cfg.AvailableSettings.CRITERIA_LITERAL_HANDLING_MODE;
 import static org.hibernate.cfg.AvailableSettings.CUSTOM_ENTITY_DIRTINESS_STRATEGY;
 import static org.hibernate.cfg.AvailableSettings.DEFAULT_BATCH_FETCH_SIZE;
 import static org.hibernate.cfg.AvailableSettings.DEFAULT_ENTITY_MODE;
@@ -77,6 +89,8 @@ import static org.hibernate.cfg.AvailableSettings.FLUSH_BEFORE_COMPLETION;
 import static org.hibernate.cfg.AvailableSettings.GENERATE_STATISTICS;
 import static org.hibernate.cfg.AvailableSettings.HQL_BULK_ID_STRATEGY;
 import static org.hibernate.cfg.AvailableSettings.INTERCEPTOR;
+import static org.hibernate.cfg.AvailableSettings.JDBC_TIME_ZONE;
+import static org.hibernate.cfg.AvailableSettings.JDBC_TYLE_PARAMS_ZERO_BASE;
 import static org.hibernate.cfg.AvailableSettings.JPAQL_STRICT_COMPLIANCE;
 import static org.hibernate.cfg.AvailableSettings.JTA_TRACK_BY_THREAD;
 import static org.hibernate.cfg.AvailableSettings.LOG_SESSION_METRICS;
@@ -105,8 +119,10 @@ import static org.hibernate.cfg.AvailableSettings.USE_SCROLLABLE_RESULTSET;
 import static org.hibernate.cfg.AvailableSettings.USE_SECOND_LEVEL_CACHE;
 import static org.hibernate.cfg.AvailableSettings.USE_SQL_COMMENTS;
 import static org.hibernate.cfg.AvailableSettings.USE_STRUCTURED_CACHE;
+import static org.hibernate.cfg.AvailableSettings.VALIDATE_QUERY_PARAMETERS;
 import static org.hibernate.cfg.AvailableSettings.WRAP_RESULT_SETS;
 import static org.hibernate.engine.config.spi.StandardConverters.BOOLEAN;
+import static org.hibernate.jpa.AvailableSettings.DISCARD_PC_ON_CLOSE;
 
 /**
  * @author Gail Badner
@@ -198,6 +214,12 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	@Override
 	public SessionFactoryBuilder applyStatelessInterceptor(Class<? extends Interceptor> statelessInterceptorClass) {
 		this.options.statelessInterceptorClass = statelessInterceptorClass;
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder applyStatelessInterceptor(Supplier<? extends Interceptor> statelessInterceptorSupplier) {
+		this.options.statelessInterceptorSupplier = statelessInterceptorSupplier;
 		return this;
 	}
 
@@ -450,6 +472,12 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	}
 
 	@Override
+	public SessionFactoryBuilder applyConnectionProviderDisablesAutoCommit(boolean providerDisablesAutoCommit) {
+		this.options.connectionProviderDisablesAutoCommit = providerDisablesAutoCommit;
+		return this;
+	}
+
+	@Override
 	public SessionFactoryBuilder applySqlComments(boolean enabled) {
 		this.options.commentsEnabled = enabled;
 		return this;
@@ -461,6 +489,42 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			this.options.sqlFunctions = new HashMap<String, SQLFunction>();
 		}
 		this.options.sqlFunctions.put( registrationName, sqlFunction );
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder allowOutOfTransactionUpdateOperations(boolean allow) {
+		this.options.allowOutOfTransactionUpdateOperations = allow;
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder enableReleaseResourcesOnCloseEnabled(boolean enable) {
+		this.options.releaseResourcesOnCloseEnabled = enable;
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder enableJpaQueryCompliance(boolean enabled) {
+		this.options.jpaCompliance.setQueryCompliance( enabled );
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder enableJpaTransactionCompliance(boolean enabled) {
+		this.options.jpaCompliance.setTransactionCompliance( enabled );
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder enableJpaListCompliance(boolean enabled) {
+		this.options.jpaCompliance.setListCompliance( enabled );
+		return this;
+	}
+
+	@Override
+	public SessionFactoryBuilder enableJpaClosedCompliance(boolean enabled) {
+		this.options.jpaCompliance.setClosedCompliance( enabled );
 		return this;
 	}
 
@@ -482,8 +546,17 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	}
 
 	@Override
+	public void disableRefreshDetachedEntity() {
+		this.options.allowRefreshDetachedEntity = false;
+	}
+
+	@Override
 	public void disableJtaTransactionAccess() {
 		this.options.jtaTransactionAccessEnabled = false;
+	}
+
+	public void enableJdbcStyleParamsZeroBased() {
+		this.options.jdbcStyleParamsZeroBased = true;
 	}
 
 	@Override
@@ -511,6 +584,9 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		private boolean flushBeforeCompletionEnabled;
 		private boolean autoCloseSessionEnabled;
 		private boolean jtaTransactionAccessEnabled;
+		private boolean allowOutOfTransactionUpdateOperations;
+		private boolean releaseResourcesOnCloseEnabled;
+		private boolean allowRefreshDetachedEntity;
 
 		// (JTA) transaction handling
 		private boolean jtaTrackByThread;
@@ -520,6 +596,7 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		private boolean statisticsEnabled;
 		private Interceptor interceptor;
 		private Class<? extends Interceptor> statelessInterceptorClass;
+		private Supplier<? extends Interceptor> statelessInterceptorSupplier;
 		private StatementInspector statementInspector;
 		private List<SessionFactoryObserver> sessionFactoryObserverList = new ArrayList<>();
 		private BaselineSessionEventsListenerBuilder baselineSessionEventsListenerBuilder;	// not exposed on builder atm
@@ -542,6 +619,7 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		private boolean orderUpdatesEnabled;
 		private boolean orderInsertsEnabled;
 
+
 		// multi-tenancy
 		private MultiTenancyStrategy multiTenancyStrategy;
 		private CurrentTenantIdentifierResolver currentTenantIdentifierResolver;
@@ -550,7 +628,10 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		private Map querySubstitutions;
 		private boolean strictJpaQueryLanguageCompliance;
 		private boolean namedQueryStartupCheckingEnabled;
+		private boolean conventionalJavaConstants;
 		private final boolean procedureParameterNullPassingEnabled;
+		private final boolean collectionJoinSubqueryRewriteEnabled;
+		private boolean jdbcStyleParamsZeroBased;
 
 		// Caching
 		private boolean secondLevelCacheEnabled;
@@ -573,9 +654,15 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		private boolean scrollableResultSetsEnabled;
 		private boolean commentsEnabled;
 		private PhysicalConnectionHandlingMode connectionHandlingMode;
+		private boolean connectionProviderDisablesAutoCommit;
 		private boolean wrapResultSetsEnabled;
+		private TimeZone jdbcTimeZone;
+		private boolean queryParametersValidationEnabled;
+		private LiteralHandlingMode criteriaLiteralHandlingMode;
 
 		private Map<String, SQLFunction> sqlFunctions;
+
+		private JpaComplianceImpl jpaCompliance;
 
 		public SessionFactoryOptionsStateStandardImpl(StandardServiceRegistry serviceRegistry) {
 			this.serviceRegistry = serviceRegistry;
@@ -607,12 +694,18 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 					true
 			);
 
+			this.allowRefreshDetachedEntity = cfgService.getSetting(
+					ALLOW_REFRESH_DETACHED_ENTITY,
+					BOOLEAN,
+					true
+			);
+
 			this.flushBeforeCompletionEnabled = cfgService.getSetting( FLUSH_BEFORE_COMPLETION, BOOLEAN, true );
 			this.autoCloseSessionEnabled = cfgService.getSetting( AUTO_CLOSE_SESSION, BOOLEAN, false );
 
 			this.statisticsEnabled = cfgService.getSetting( GENERATE_STATISTICS, BOOLEAN, false );
 			this.interceptor = determineInterceptor( configurationSettings, strategySelector );
-			this.statelessInterceptorClass = determineStatelessInterceptorClass( configurationSettings, strategySelector );
+			this.statelessInterceptorSupplier = determineStatelessInterceptor( configurationSettings, strategySelector );
 			this.statementInspector = strategySelector.resolveStrategy(
 					StatementInspector.class,
 					configurationSettings.get( STATEMENT_INSPECTOR )
@@ -668,7 +761,10 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			this.querySubstitutions = ConfigurationHelper.toMap( QUERY_SUBSTITUTIONS, " ,=;:\n\t\r\f", configurationSettings );
 			this.strictJpaQueryLanguageCompliance = cfgService.getSetting( JPAQL_STRICT_COMPLIANCE, BOOLEAN, false );
 			this.namedQueryStartupCheckingEnabled = cfgService.getSetting( QUERY_STARTUP_CHECKING, BOOLEAN, true );
+			this.conventionalJavaConstants = cfgService.getSetting(
+					CONVENTIONAL_JAVA_CONSTANTS, BOOLEAN, true );
 			this.procedureParameterNullPassingEnabled = cfgService.getSetting( PROCEDURE_NULL_PARAM_PASSING, BOOLEAN, false );
+			this.collectionJoinSubqueryRewriteEnabled = cfgService.getSetting( COLLECTION_JOIN_SUBQUERY, BOOLEAN, true );
 
 			this.secondLevelCacheEnabled = cfgService.getSetting( USE_SECOND_LEVEL_CACHE, BOOLEAN, true );
 			this.queryCacheEnabled = cfgService.getSetting( USE_QUERY_CACHE, BOOLEAN, false );
@@ -734,10 +830,62 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			this.jdbcFetchSize = ConfigurationHelper.getInteger( STATEMENT_FETCH_SIZE, configurationSettings );
 
 			this.connectionHandlingMode = interpretConnectionHandlingMode( configurationSettings, serviceRegistry );
+			this.connectionProviderDisablesAutoCommit = ConfigurationHelper.getBoolean(
+					AvailableSettings.CONNECTION_PROVIDER_DISABLES_AUTOCOMMIT,
+					configurationSettings,
+					false
+			);
 
 			this.commentsEnabled = ConfigurationHelper.getBoolean( USE_SQL_COMMENTS, configurationSettings );
 
 			this.preferUserTransaction = ConfigurationHelper.getBoolean( PREFER_USER_TRANSACTION, configurationSettings, false  );
+
+			this.allowOutOfTransactionUpdateOperations = ConfigurationHelper.getBoolean(
+					ALLOW_UPDATE_OUTSIDE_TRANSACTION,
+					configurationSettings,
+					false
+			);
+
+			this.releaseResourcesOnCloseEnabled = ConfigurationHelper.getBoolean(
+					DISCARD_PC_ON_CLOSE,
+					configurationSettings,
+					false
+			);
+			Object jdbcTimeZoneValue = configurationSettings.get(
+					JDBC_TIME_ZONE
+			);
+
+			if ( jdbcTimeZoneValue instanceof TimeZone ) {
+				this.jdbcTimeZone = (TimeZone) jdbcTimeZoneValue;
+			}
+			else if ( jdbcTimeZoneValue instanceof ZoneId ) {
+				this.jdbcTimeZone = TimeZone.getTimeZone( (ZoneId) jdbcTimeZoneValue );
+			}
+			else if ( jdbcTimeZoneValue instanceof String ) {
+				this.jdbcTimeZone = TimeZone.getTimeZone( ZoneId.of((String) jdbcTimeZoneValue) );
+			}
+			else if ( jdbcTimeZoneValue != null ) {
+				throw new IllegalArgumentException( "Configuration property " + JDBC_TIME_ZONE + " value [" + jdbcTimeZoneValue + "] is not supported!" );
+			}
+
+			this.queryParametersValidationEnabled = ConfigurationHelper.getBoolean(
+					VALIDATE_QUERY_PARAMETERS,
+					configurationSettings,
+					true
+			);
+
+			this.criteriaLiteralHandlingMode = LiteralHandlingMode.interpret(
+				configurationSettings.get( CRITERIA_LITERAL_HANDLING_MODE )
+			);
+
+			this.jdbcStyleParamsZeroBased = ConfigurationHelper.getBoolean(
+					JDBC_TYLE_PARAMS_ZERO_BASE,
+					configurationSettings,
+					false
+			);
+
+			// added the boolean parameter in case we want to define some form of "all" as discussed
+			this.jpaCompliance = new JpaComplianceImpl( configurationSettings, false );
 		}
 
 		private static Interceptor determineInterceptor(Map configurationSettings, StrategySelector strategySelector) {
@@ -760,7 +908,7 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		}
 
 		@SuppressWarnings("unchecked")
-		private static Class<? extends Interceptor> determineStatelessInterceptorClass(
+		private static Supplier<? extends Interceptor> determineStatelessInterceptor(
 				Map configurationSettings,
 				StrategySelector strategySelector) {
 			Object setting = configurationSettings.get( SESSION_SCOPED_INTERCEPTOR );
@@ -778,16 +926,19 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			if ( setting == null ) {
 				return null;
 			}
+			else if ( setting instanceof Supplier ) {
+				return (Supplier<? extends Interceptor>) setting;
+			}
 			else if ( setting instanceof Class ) {
-				return (Class<? extends Interceptor>) setting;
+				Class<? extends Interceptor> clazz = (Class<? extends Interceptor>) setting;
+				return interceptorSupplier( clazz );
 			}
 			else {
-				return strategySelector.selectStrategyImplementor(
+				return interceptorSupplier( strategySelector.selectStrategyImplementor(
 						Interceptor.class,
 						setting.toString()
-				);
+				) );
 			}
-
 		}
 
 		private PhysicalConnectionHandlingMode interpretConnectionHandlingMode(
@@ -868,6 +1019,20 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			return jtaTransactionAccessEnabled;
 		}
 
+		public boolean isAllowRefreshDetachedEntity() {
+			return allowRefreshDetachedEntity;
+		}
+
+		public boolean isAllowOutOfTransactionUpdateOperations() {
+			return allowOutOfTransactionUpdateOperations;
+		}
+
+
+		@Override
+		public boolean isReleaseResourcesOnCloseEnabled() {
+			return releaseResourcesOnCloseEnabled;
+		}
+
 		@Override
 		public Object getBeanManagerReference() {
 			return beanManagerReference;
@@ -911,6 +1076,11 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		@Override
 		public Class<? extends Interceptor> getStatelessInterceptorImplementor() {
 			return statelessInterceptorClass;
+		}
+
+		@Override
+		public Supplier<? extends Interceptor> getStatelessInterceptorImplementorSupplier() {
+			return statelessInterceptorSupplier;
 		}
 
 		@Override
@@ -1023,9 +1193,18 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			return namedQueryStartupCheckingEnabled;
 		}
 
+		public boolean isConventionalJavaConstants() {
+			return conventionalJavaConstants;
+		}
+
 		@Override
 		public boolean isProcedureParameterNullPassingEnabled() {
 			return procedureParameterNullPassingEnabled;
+		}
+
+		@Override
+		public boolean isCollectionJoinSubqueryRewriteEnabled() {
+			return collectionJoinSubqueryRewriteEnabled;
 		}
 
 		@Override
@@ -1108,6 +1287,10 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 			return connectionHandlingMode;
 		}
 
+		public boolean connectionProviderDisablesAutoCommit() {
+			return connectionProviderDisablesAutoCommit;
+		}
+
 		@Override
 		public ConnectionReleaseMode getConnectionReleaseMode() {
 			return getPhysicalConnectionHandlingMode().getReleaseMode();
@@ -1142,6 +1325,42 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		public boolean isPreferUserTransaction() {
 			return this.preferUserTransaction;
 		}
+
+		@Override
+		public TimeZone getJdbcTimeZone() {
+			return this.jdbcTimeZone;
+		}
+
+		@Override
+		public boolean isQueryParametersValidationEnabled() {
+			return this.queryParametersValidationEnabled;
+		}
+
+		@Override
+		public LiteralHandlingMode getCriteriaLiteralHandlingMode() {
+			return this.criteriaLiteralHandlingMode;
+		}
+
+		@Override
+		public boolean jdbcStyleParamsZeroBased() {
+			return this.jdbcStyleParamsZeroBased;
+		}
+
+		@Override
+		public JpaCompliance getJpaCompliance() {
+			return jpaCompliance;
+		}
+	}
+
+	private static Supplier<? extends Interceptor> interceptorSupplier(Class<? extends Interceptor> clazz) {
+		return () -> {
+			try {
+				return clazz.newInstance();
+			}
+			catch (InstantiationException | IllegalAccessException e) {
+				throw new HibernateException( "Could not supply session-scoped SessionFactory Interceptor", e );
+			}
+		};
 	}
 
 	@Override
@@ -1157,6 +1376,24 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	@Override
 	public boolean isJtaTransactionAccessEnabled() {
 		return options.isJtaTransactionAccessEnabled();
+	}
+
+	public boolean isAllowRefreshDetachedEntity() {
+		return options.isAllowRefreshDetachedEntity();
+	}
+
+	public boolean isAllowOutOfTransactionUpdateOperations() {
+		return options.isAllowOutOfTransactionUpdateOperations();
+	}
+
+	@Override
+	public boolean isReleaseResourcesOnCloseEnabled(){
+		return options.releaseResourcesOnCloseEnabled;
+	}
+
+	@Override
+	public JpaCompliance getJpaCompliance() {
+		return options.jpaCompliance;
 	}
 
 	@Override
@@ -1202,6 +1439,11 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	@Override
 	public Class<? extends Interceptor> getStatelessInterceptorImplementor() {
 		return options.getStatelessInterceptorImplementor();
+	}
+
+	@Override
+	public Supplier<? extends Interceptor> getStatelessInterceptorImplementorSupplier() {
+		return options.getStatelessInterceptorImplementorSupplier();
 	}
 
 	@Override
@@ -1314,9 +1556,18 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 		return options.isNamedQueryStartupCheckingEnabled();
 	}
 
+	public boolean isConventionalJavaConstants() {
+		return options.isConventionalJavaConstants();
+	}
+
 	@Override
 	public boolean isProcedureParameterNullPassingEnabled() {
 		return options.isProcedureParameterNullPassingEnabled();
+	}
+
+	@Override
+	public boolean isCollectionJoinSubqueryRewriteEnabled() {
+		return options.isCollectionJoinSubqueryRewriteEnabled();
 	}
 
 	@Override
@@ -1400,6 +1651,11 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	}
 
 	@Override
+	public boolean connectionProviderDisablesAutoCommit() {
+		return options.connectionProviderDisablesAutoCommit();
+	}
+
+	@Override
 	public ConnectionReleaseMode getConnectionReleaseMode() {
 		return getPhysicalConnectionHandlingMode().getReleaseMode();
 	}
@@ -1432,5 +1688,25 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	@Override
 	public boolean isPreferUserTransaction() {
 		return options.isPreferUserTransaction();
+	}
+
+	@Override
+	public TimeZone getJdbcTimeZone() {
+		return options.getJdbcTimeZone();
+	}
+
+	@Override
+	public boolean isQueryParametersValidationEnabled() {
+		return options.isQueryParametersValidationEnabled();
+	}
+
+	@Override
+	public LiteralHandlingMode getCriteriaLiteralHandlingMode() {
+		return options.getCriteriaLiteralHandlingMode();
+	}
+
+	@Override
+	public boolean jdbcStyleParamsZeroBased() {
+		return options.jdbcStyleParamsZeroBased();
 	}
 }

@@ -304,7 +304,7 @@ public class CascadingActions {
 				CollectionType collectionType,
 				Object collection) {
 			// persists don't cascade to uninitialized collections
-			return getAllElementsIterator( session, collectionType, collection );
+			return getLoadedElementsIterator( session, collectionType, collection );
 		}
 
 		@Override
@@ -378,7 +378,7 @@ public class CascadingActions {
 					String parentEntiytName = persister.getEntityName();
 					String propertyName = persister.getPropertyNames()[propertyIndex];
 					throw new TransientPropertyValueException(
-							"object references an unsaved transient instance - save the transient instance beforeQuery flushing",
+							"object references an unsaved transient instance - save the transient instance before flushing",
 							childEntityName,
 							parentEntiytName,
 							propertyName

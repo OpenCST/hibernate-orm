@@ -11,8 +11,13 @@ import java.sql.Types;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import javax.persistence.Entity;
 import javax.persistence.EntityManager;
+import javax.persistence.Id;
+import javax.persistence.NamedStoredProcedureQueries;
+import javax.persistence.NamedStoredProcedureQuery;
 import javax.persistence.ParameterMode;
+import javax.persistence.StoredProcedureParameter;
 import javax.persistence.StoredProcedureQuery;
 
 import org.hibernate.Session;
@@ -23,14 +28,20 @@ import org.hibernate.procedure.ProcedureCall;
 import org.hibernate.result.Output;
 import org.hibernate.result.ResultSetOutput;
 
+import org.hibernate.testing.FailureExpected;
 import org.hibernate.testing.RequiresDialect;
+import org.hibernate.testing.TestForIssue;
+import org.hibernate.testing.transaction.TransactionUtil;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author Vlad Mihalcea
@@ -43,7 +54,32 @@ public class OracleStoredProcedureTest extends BaseEntityManagerFunctionalTestCa
         return new Class<?>[] {
             Person.class,
             Phone.class,
+			IdHolder.class
         };
+    }
+
+    @NamedStoredProcedureQueries({
+		@NamedStoredProcedureQuery(
+			name = "singleRefCursor",
+			procedureName = "singleRefCursor",
+			parameters = {
+				@StoredProcedureParameter(mode = ParameterMode.REF_CURSOR, type = void.class)
+			}
+		),
+		@NamedStoredProcedureQuery(
+			name = "outAndRefCursor",
+			procedureName = "outAndRefCursor",
+			parameters = {
+				@StoredProcedureParameter(mode = ParameterMode.REF_CURSOR, type = void.class),
+				@StoredProcedureParameter(mode = ParameterMode.OUT, type = Long.class),
+			}
+		)
+	})
+    @Entity(name = "IdHolder")
+    public static class IdHolder {
+
+        @Id
+        Long id;
     }
 
     @Before
@@ -54,79 +90,95 @@ public class OracleStoredProcedureTest extends BaseEntityManagerFunctionalTestCa
         try {
             Session session = entityManager.unwrap( Session.class );
 
-            session.doWork( new Work() {
-                @Override
-                public void execute(Connection connection) throws SQLException {
-                    Statement statement = null;
-                    try {
-                        statement = connection.createStatement();
-                        statement.executeUpdate(
-                                "CREATE OR REPLACE PROCEDURE sp_count_phones (  " +
-                                        "   personId IN NUMBER,  " +
-                                        "   phoneCount OUT NUMBER )  " +
-                                        "AS  " +
-                                        "BEGIN  " +
-                                        "    SELECT COUNT(*) INTO phoneCount  " +
-                                        "    FROM phone  " +
-                                        "    WHERE person_id = personId; " +
-                                        "END;"
-                        );
-                        statement.executeUpdate(
-                                "CREATE OR REPLACE PROCEDURE sp_person_phones ( " +
-                                        "   personId IN NUMBER, " +
-                                        "   personPhones OUT SYS_REFCURSOR ) " +
-                                        "AS  " +
-                                        "BEGIN " +
-                                        "    OPEN personPhones FOR " +
-                                        "    SELECT *" +
-                                        "    FROM phone " +
-                                        "    WHERE person_id = personId; " +
-                                        "END;"
-                        );
-                        statement.executeUpdate(
-                                "CREATE OR REPLACE FUNCTION fn_count_phones ( " +
-                                        "    personId IN NUMBER ) " +
-                                        "    RETURN NUMBER " +
-                                        "IS " +
-                                        "    phoneCount NUMBER; " +
-                                        "BEGIN " +
-                                        "    SELECT COUNT(*) INTO phoneCount " +
-                                        "    FROM phone " +
-                                        "    WHERE person_id = personId; " +
-                                        "    RETURN( phoneCount ); " +
-                                        "END;"
-                        );
-                        statement.executeUpdate(
-                                "CREATE OR REPLACE FUNCTION fn_person_and_phones ( " +
-                                        "    personId IN NUMBER ) " +
-                                        "    RETURN SYS_REFCURSOR " +
-                                        "IS " +
-                                        "    personAndPhones SYS_REFCURSOR; " +
-                                        "BEGIN " +
-                                        "   OPEN personAndPhones FOR " +
-                                        "        SELECT " +
-                                        "            pr.id AS \"pr.id\", " +
-                                        "            pr.name AS \"pr.name\", " +
-                                        "            pr.nickName AS \"pr.nickName\", " +
-                                        "            pr.address AS \"pr.address\", " +
-                                        "            pr.createdOn AS \"pr.createdOn\", " +
-                                        "            pr.version AS \"pr.version\", " +
-                                        "            ph.id AS \"ph.id\", " +
-                                        "            ph.person_id AS \"ph.person_id\", " +
-                                        "            ph.phone_number AS \"ph.phone_number\" " +
-                                        "       FROM person pr " +
-                                        "       JOIN phone ph ON pr.id = ph.person_id " +
-                                        "       WHERE pr.id = personId; " +
-                                        "   RETURN personAndPhones; " +
-                                        "END;"
-                        );
-                    } finally {
-                        if ( statement != null ) {
-                            statement.close();
-                        }
-                    }
-                }
-            }  );
+            session.doWork( connection -> {
+				Statement statement = null;
+				try {
+					statement = connection.createStatement();
+					statement.executeUpdate(
+						"CREATE OR REPLACE PROCEDURE sp_count_phones (  " +
+						"   personId IN NUMBER,  " +
+						"   phoneCount OUT NUMBER )  " +
+						"AS  " +
+						"BEGIN  " +
+						"    SELECT COUNT(*) INTO phoneCount  " +
+						"    FROM phone  " +
+						"    WHERE person_id = personId; " +
+						"END;"
+					);
+					statement.executeUpdate(
+						"CREATE OR REPLACE PROCEDURE sp_person_phones ( " +
+						"   personId IN NUMBER, " +
+						"   personPhones OUT SYS_REFCURSOR ) " +
+						"AS  " +
+						"BEGIN " +
+						"    OPEN personPhones FOR " +
+						"    SELECT *" +
+						"    FROM phone " +
+						"    WHERE person_id = personId; " +
+						"END;"
+					);
+					statement.executeUpdate(
+						"CREATE OR REPLACE FUNCTION fn_count_phones ( " +
+						"    personId IN NUMBER ) " +
+						"    RETURN NUMBER " +
+						"IS " +
+						"    phoneCount NUMBER; " +
+						"BEGIN " +
+						"    SELECT COUNT(*) INTO phoneCount " +
+						"    FROM phone " +
+						"    WHERE person_id = personId; " +
+						"    RETURN( phoneCount ); " +
+						"END;"
+					);
+					statement.executeUpdate(
+						"CREATE OR REPLACE FUNCTION fn_person_and_phones ( " +
+						"    personId IN NUMBER ) " +
+						"    RETURN SYS_REFCURSOR " +
+						"IS " +
+						"    personAndPhones SYS_REFCURSOR; " +
+						"BEGIN " +
+						"   OPEN personAndPhones FOR " +
+						"        SELECT " +
+						"            pr.id AS \"pr.id\", " +
+						"            pr.name AS \"pr.name\", " +
+						"            pr.nickName AS \"pr.nickName\", " +
+						"            pr.address AS \"pr.address\", " +
+						"            pr.createdOn AS \"pr.createdOn\", " +
+						"            pr.version AS \"pr.version\", " +
+						"            ph.id AS \"ph.id\", " +
+						"            ph.person_id AS \"ph.person_id\", " +
+						"            ph.phone_number AS \"ph.phone_number\" " +
+						"       FROM person pr " +
+						"       JOIN phone ph ON pr.id = ph.person_id " +
+						"       WHERE pr.id = personId; " +
+						"   RETURN personAndPhones; " +
+						"END;"
+					);
+					statement.executeUpdate(
+                        "CREATE OR REPLACE " +
+                        "PROCEDURE singleRefCursor(p_recordset OUT SYS_REFCURSOR) AS " +
+                        "  BEGIN " +
+                        "    OPEN p_recordset FOR " +
+                        "    SELECT 1 as id " +
+                        "    FROM dual; " +
+                        "  END; "
+					);
+					statement.executeUpdate(
+                        "CREATE OR REPLACE " +
+                        "PROCEDURE outAndRefCursor(p_recordset OUT SYS_REFCURSOR, p_value OUT NUMBER) AS " +
+                        "  BEGIN " +
+                        "    OPEN p_recordset FOR " +
+                        "    SELECT 1 as id " +
+                        "    FROM dual; " +
+						"	 SELECT 1 INTO p_value FROM dual; " +
+                        "  END; "
+					);
+				} finally {
+					if ( statement != null ) {
+						statement.close();
+					}
+				}
+			} );
         }
         finally {
             entityManager.getTransaction().rollback();
@@ -333,7 +385,13 @@ public class OracleStoredProcedureTest extends BaseEntityManagerFunctionalTestCa
             session.doWork( connection -> {
                 try (CallableStatement function = connection.prepareCall(
                         "{ ? = call fn_person_and_phones( ? ) }" )) {
-                    function.registerOutParameter( 1, Types.REF_CURSOR );
+                    try {
+                        function.registerOutParameter( 1, Types.REF_CURSOR );
+                    }
+                    catch ( SQLException e ) {
+                        //OracleTypes.CURSOR
+                        function.registerOutParameter( 1, -10 );
+                    }
                     function.setInt( 2, 1 );
                     function.execute();
                     try (ResultSet resultSet = (ResultSet) function.getObject( 1);) {
@@ -349,5 +407,55 @@ public class OracleStoredProcedureTest extends BaseEntityManagerFunctionalTestCa
             entityManager.getTransaction().rollback();
             entityManager.close();
         }
+    }
+
+    @Test
+    @TestForIssue( jiraKey = "HHH-11863")
+    public void testSysRefCursorAsOutParameter() {
+
+        doInJPA( this::entityManagerFactory, entityManager -> {
+            StoredProcedureQuery function = entityManager.createNamedStoredProcedureQuery("singleRefCursor");
+
+            function.execute();
+
+            assertFalse( function.hasMoreResults() );
+            Long value = null;
+
+			try ( ResultSet resultSet = (ResultSet) function.getOutputParameterValue( 1 ) ) {
+				while ( resultSet.next() ) {
+					value = resultSet.getLong( 1 );
+				}
+			}
+			catch (SQLException e) {
+				fail(e.getMessage());
+			}
+
+			assertEquals( Long.valueOf( 1 ), value );
+        } );
+    }
+
+    @Test
+    @TestForIssue( jiraKey = "HHH-11863")
+    public void testOutAndSysRefCursorAsOutParameter() {
+
+        doInJPA( this::entityManagerFactory, entityManager -> {
+            StoredProcedureQuery function = entityManager.createNamedStoredProcedureQuery("outAndRefCursor");
+
+            function.execute();
+
+            assertFalse( function.hasMoreResults() );
+            Long value = null;
+
+			try ( ResultSet resultSet = (ResultSet) function.getOutputParameterValue( 1 ) ) {
+				while ( resultSet.next() ) {
+					value = resultSet.getLong( 1 );
+				}
+			}
+			catch (SQLException e) {
+				fail(e.getMessage());
+			}
+
+			assertEquals( value, function.getOutputParameterValue( 2 ) );
+        } );
     }
 }

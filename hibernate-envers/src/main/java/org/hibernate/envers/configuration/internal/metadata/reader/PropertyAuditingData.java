@@ -15,10 +15,13 @@ import org.hibernate.envers.AuditOverrides;
 import org.hibernate.envers.ModificationStore;
 import org.hibernate.envers.RelationTargetAuditMode;
 import org.hibernate.envers.internal.entities.PropertyData;
+import org.hibernate.mapping.Value;
+import org.hibernate.type.Type;
 
 /**
  * @author Adam Warski (adam at warski dot org)
  * @author Michal Skowronek (mskowr at o2 dot pl)
+ * @author Chris Cranford
  */
 public class PropertyAuditingData {
 	private String name;
@@ -35,6 +38,10 @@ public class PropertyAuditingData {
 	private boolean forceInsertable;
 	private boolean usingModifiedFlag;
 	private String modifiedFlagName;
+	private Value value;
+	// Synthetic properties are ones which are not part of the actual java model.
+	// They're properties used for bookkeeping by Hibernate
+	private boolean syntheic;
 
 	public PropertyAuditingData() {
 	}
@@ -44,6 +51,29 @@ public class PropertyAuditingData {
 			RelationTargetAuditMode relationTargetAuditMode,
 			String auditMappedBy, String positionMappedBy,
 			boolean forceInsertable) {
+		this(
+				name,
+				accessType,
+				store,
+				relationTargetAuditMode,
+				auditMappedBy,
+				positionMappedBy,
+				forceInsertable,
+				false,
+				null
+		);
+	}
+
+	public PropertyAuditingData(
+			String name,
+			String accessType,
+			ModificationStore store,
+			RelationTargetAuditMode relationTargetAuditMode,
+			String auditMappedBy,
+			String positionMappedBy,
+			boolean forceInsertable,
+			boolean syntheic,
+			Value value) {
 		this.name = name;
 		this.beanName = name;
 		this.accessType = accessType;
@@ -52,6 +82,8 @@ public class PropertyAuditingData {
 		this.auditMappedBy = auditMappedBy;
 		this.positionMappedBy = positionMappedBy;
 		this.forceInsertable = forceInsertable;
+		this.syntheic = syntheic;
+		this.value = value;
 	}
 
 	public String getName() {
@@ -70,10 +102,18 @@ public class PropertyAuditingData {
 		this.beanName = beanName;
 	}
 
+	/**
+	 * @deprecated since 5.2, to be removed in 6.0 with no replacement.
+	 */
+	@Deprecated
 	public ModificationStore getStore() {
 		return store;
 	}
 
+	/**
+	 * @deprecated since 5.2, to be removed in 6.0 with no replacement.
+	 */
+	@Deprecated
 	public void setStore(ModificationStore store) {
 		this.store = store;
 	}
@@ -102,10 +142,21 @@ public class PropertyAuditingData {
 		this.accessType = accessType;
 	}
 
+	// todo (6.0) - remove this and use #resolvePropertyData instead
 	public PropertyData getPropertyData() {
+		return resolvePropertyData( null );
+	}
+
+	public PropertyData resolvePropertyData(Type propertyType) {
 		return new PropertyData(
-				name, beanName, accessType, store,
-				usingModifiedFlag, modifiedFlagName
+				name,
+				beanName,
+				accessType,
+				store,
+				usingModifiedFlag,
+				modifiedFlagName,
+				syntheic,
+				propertyType
 		);
 	}
 
@@ -203,4 +254,11 @@ public class PropertyAuditingData {
 		this.relationTargetAuditMode = relationTargetAuditMode;
 	}
 
+	public boolean isSyntheic() {
+		return syntheic;
+	}
+
+	public Value getValue() {
+		return value;
+	}
 }

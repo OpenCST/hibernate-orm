@@ -67,6 +67,7 @@ import org.hibernate.internal.ScrollableResultsImpl;
 import org.hibernate.internal.util.StringHelper;
 import org.hibernate.internal.util.collections.CollectionHelper;
 import org.hibernate.loader.spi.AfterLoadAction;
+import org.hibernate.param.ParameterBinder;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.persister.entity.Loadable;
@@ -96,6 +97,10 @@ import org.hibernate.type.VersionType;
  * @see org.hibernate.persister.entity.Loadable
  */
 public abstract class Loader {
+
+	public static final String SELECT = "select";
+	public static final String SELECT_DISTINCT = "select distinct";
+
 	protected static final CoreMessageLogger LOG = CoreLogging.messageLogger( Loader.class );
 	protected static final boolean DEBUG_ENABLED = LOG.isDebugEnabled();
 
@@ -103,6 +108,8 @@ public abstract class Loader {
 	private volatile ColumnNameCache columnNameCache;
 
 	private final boolean referenceCachingEnabled;
+
+	private boolean isJdbc4 = true;
 
 	public Loader(SessionFactoryImplementor factory) {
 		this.factory = factory;
@@ -229,19 +236,20 @@ public abstract class Loader {
 	protected String preprocessSQL(
 			String sql,
 			QueryParameters parameters,
-			Dialect dialect,
+			SessionFactoryImplementor sessionFactory,
 			List<AfterLoadAction> afterLoadActions) throws HibernateException {
+
+		Dialect dialect = sessionFactory.getServiceRegistry().getService( JdbcServices.class ).getDialect();
+
 		sql = applyLocks( sql, parameters, dialect, afterLoadActions );
 
-		// Keep this here, rather than moving to Select.  Some Dialects may need the hint to be appended to the very
-		// end or beginning of the finalized SQL statement, so wait until everything is processed.
-		if ( parameters.getQueryHints() != null && parameters.getQueryHints().size() > 0 ) {
-			sql = dialect.getQueryHintString( sql, parameters.getQueryHints() );
-		}
+		sql = dialect.addSqlHintOrComment(
+			sql,
+			parameters,
+			sessionFactory.getSessionFactoryOptions().isCommentsEnabled()
+		);
 
-		return getFactory().getSessionFactoryOptions().isCommentsEnabled()
-				? prependComment( sql, parameters )
-				: sql;
+		return processDistinctKeyword( sql, parameters );
 	}
 
 	protected boolean shouldUseFollowOnLocking(
@@ -289,16 +297,6 @@ public abstract class Loader {
 			}
 		}
 		return lockModeToUse;
-	}
-
-	private String prependComment(String sql, QueryParameters parameters) {
-		String comment = parameters.getComment();
-		if ( comment == null ) {
-			return sql;
-		}
-		else {
-			return "/* " + comment + " */ " + sql;
-		}
 	}
 
 	/**
@@ -571,8 +569,8 @@ public abstract class Loader {
 
 			EntityKey keyToRead = null;
 			// This check is needed since processing leaves the cursor
-			// afterQuery the last physical row for the current logical row;
-			// thus if we are afterQuery the last physical row, this might be
+			// after the last physical row for the current logical row;
+			// thus if we are after the last physical row, this might be
 			// caused by either:
 			//      1) scrolling to the last logical row
 			//      2) scrolling past the last logical row
@@ -595,7 +593,7 @@ public abstract class Loader {
 			}
 			else {
 				// Since the result set cursor is always left at the first
-				// physical row afterQuery the "last processed", we need to jump
+				// physical row after the "last processed", we need to jump
 				// back one position to get the key value we are interested
 				// in skipping
 				resultSet.previous();
@@ -852,7 +850,21 @@ public abstract class Loader {
 					}
 				}
 			}
-			final Serializable resolvedId = (Serializable) idType.resolve( hydratedKeyState[i], session, null );
+			// If hydratedKeyState[i] is null, then we know the association should be null.
+			// Don't bother resolving the ID if hydratedKeyState[i] is null.
+
+			// Implementation note: if the ID is a composite ID, then resolving a null value will
+			// result in instantiating an empty composite if AvailableSettings#CREATE_EMPTY_COMPOSITES_ENABLED
+			// is true. By not resolving a null value for a composite ID, we avoid the overhead of instantiating
+			// an empty composite, checking if it is equivalent to null (it should be), then ultimately throwing
+			// out the empty value.
+			final Serializable resolvedId;
+			if ( hydratedKeyState[i] != null ) {
+				resolvedId = (Serializable) idType.resolve( hydratedKeyState[i], session, null );
+			}
+			else {
+				resolvedId = null;
+			}
 			keys[i] = resolvedId == null ? null : session.generateEntityKey( resolvedId, persisters[i] );
 		}
 	}
@@ -1111,7 +1123,7 @@ public abstract class Loader {
 		if ( collectionPersisters != null ) {
 			for ( CollectionPersister collectionPersister : collectionPersisters ) {
 				if ( collectionPersister.isArray() ) {
-					//for arrays, we should end the collection load beforeQuery resolving
+					//for arrays, we should end the collection load before resolving
 					//the entities, since the actual array instances are not instantiated
 					//during loading
 					//TODO: or we could do this polymorphically, and have two
@@ -1144,7 +1156,7 @@ public abstract class Loader {
 		if ( collectionPersisters != null ) {
 			for ( CollectionPersister collectionPersister : collectionPersisters ) {
 				if ( !collectionPersister.isArray() ) {
-					//for sets, we should end the collection load afterQuery resolving
+					//for sets, we should end the collection load after resolving
 					//the entities, since we might call hashCode() on the elements
 					//TODO: or we could do this polymorphically, and have two
 					//      different operations implemented differently for arrays
@@ -1154,7 +1166,7 @@ public abstract class Loader {
 		}
 
 		// Until this entire method is refactored w/ polymorphism, postLoad was
-		// split off from initializeEntity.  It *must* occur afterQuery
+		// split off from initializeEntity.  It *must* occur after
 		// endCollectionLoad to ensure the collection is in the
 		// persistence context.
 		if ( hydratedObjects != null ) {
@@ -1166,7 +1178,7 @@ public abstract class Loader {
 						if ( entityEntry == null ) {
 							// big problem
 							throw new HibernateException(
-									"Could not locate EntityEntry immediately afterQuery two-phase load"
+									"Could not locate EntityEntry immediately after two-phase load"
 							);
 						}
 						afterLoadAction.afterLoad( session, hydratedObject, (Loadable) entityEntry.getPersister() );
@@ -1204,7 +1216,7 @@ public abstract class Loader {
 	}
 
 	/**
-	 * Are rows transformed immediately afterQuery being read from the ResultSet?
+	 * Are rows transformed immediately after being read from the ResultSet?
 	 *
 	 * @return true, if getResultColumnOrRow() transforms the results; false, otherwise
 	 */
@@ -1898,18 +1910,57 @@ public abstract class Loader {
 		String sql = limitHandler.processSql( queryParameters.getFilteredSQL(), queryParameters.getRowSelection() );
 
 		// Adding locks and comments.
-		sql = preprocessSQL( sql, queryParameters, getFactory().getDialect(), afterLoadActions );
+		sql = preprocessSQL( sql, queryParameters, getFactory(), afterLoadActions );
 
 		final PreparedStatement st = prepareQueryStatement( sql, queryParameters, limitHandler, scroll, session );
-		return new SqlStatementWrapper(
-				st, getResultSet(
+
+		final ResultSet rs;
+
+		if( queryParameters.isCallable() && isTypeOf( st, CallableStatement.class ) ) {
+			final CallableStatement cs = st.unwrap( CallableStatement.class );
+
+			rs = getResultSet(
+					cs,
+					queryParameters.getRowSelection(),
+					limitHandler,
+					queryParameters.hasAutoDiscoverScalarTypes(),
+					session
+			);
+		}
+		else {
+			rs = getResultSet(
 				st,
 				queryParameters.getRowSelection(),
 				limitHandler,
 				queryParameters.hasAutoDiscoverScalarTypes(),
 				session
-		)
+			);
+		}
+
+		return new SqlStatementWrapper(
+			st,
+			rs
 		);
+
+	}
+
+	private boolean isTypeOf(final Statement statement, final Class<? extends Statement> type) {
+		if ( isJdbc4 ) {
+			try {
+				// This is "more correct" than #isInstance, but not always supported.
+				return statement.isWrapperFor( type );
+			}
+			catch (SQLException e) {
+				// No operation
+			}
+			catch (Throwable e) {
+				// No operation. Note that this catches more than just SQLException to
+				// cover edge cases where a driver might throw an UnsupportedOperationException, AbstractMethodError,
+				// etc.  If so, skip permanently.
+				isJdbc4 = false;
+			}
+		}
+		return type.isInstance( statement );
 	}
 
 	/**
@@ -2022,7 +2073,7 @@ public abstract class Loader {
 	 * <p/>
 	 * Positional parameters are those specified by JDBC-style ? parameters
 	 * in the source query.  It is (currently) expected that these come
-	 * beforeQuery any named parameters in the source query.
+	 * before any named parameters in the source query.
 	 *
 	 * @param statement The JDBC prepared statement
 	 * @param queryParameters The encapsulation of the parameter values to be bound.
@@ -2115,22 +2166,54 @@ public abstract class Loader {
 			final SharedSessionContractImplementor session) throws SQLException, HibernateException {
 		try {
 			ResultSet rs = session.getJdbcCoordinator().getResultSetReturn().extract( st );
-			rs = wrapResultSetIfEnabled( rs, session );
 
-			if ( !limitHandler.supportsLimitOffset() || !LimitHelper.useLimit( limitHandler, selection ) ) {
-				advance( rs, selection );
-			}
-
-			if ( autodiscovertypes ) {
-				autoDiscoverTypes( rs );
-			}
-			return rs;
+			return processResultSet(rs, selection, limitHandler, autodiscovertypes, session);
 		}
 		catch (SQLException | HibernateException e) {
 			session.getJdbcCoordinator().getLogicalConnection().getResourceRegistry().release( st );
 			session.getJdbcCoordinator().afterStatementExecution();
 			throw e;
 		}
+	}
+
+	/**
+	 * Execute given <tt>CallableStatement</tt>, advance to the first result and return SQL <tt>ResultSet</tt>.
+	 */
+	protected final ResultSet getResultSet(
+			final CallableStatement st,
+			final RowSelection selection,
+			final LimitHandler limitHandler,
+			final boolean autodiscovertypes,
+			final SharedSessionContractImplementor session) throws SQLException, HibernateException {
+		try {
+			ResultSet rs = session.getJdbcCoordinator().getResultSetReturn().extract( st );
+
+			return processResultSet(rs, selection, limitHandler, autodiscovertypes, session);
+		}
+		catch (SQLException | HibernateException e) {
+			session.getJdbcCoordinator().getLogicalConnection().getResourceRegistry().release( st );
+			session.getJdbcCoordinator().afterStatementExecution();
+			throw e;
+		}
+	}
+
+	private ResultSet processResultSet(
+			ResultSet rs,
+			final RowSelection selection,
+			final LimitHandler limitHandler,
+			final boolean autodiscovertypes,
+			final SharedSessionContractImplementor session
+	) throws SQLException, HibernateException {
+		rs = wrapResultSetIfEnabled( rs, session );
+
+		if ( !limitHandler.supportsLimitOffset() || !LimitHelper.useLimit( limitHandler, selection ) ) {
+			advance( rs, selection );
+		}
+
+		if ( autodiscovertypes ) {
+			autoDiscoverTypes( rs );
+		}
+		return rs;
 	}
 
 	protected void autoDiscoverTypes(ResultSet rs) {
@@ -2737,7 +2820,7 @@ public abstract class Loader {
 
 	/**
 	 * Calculate and cache select-clause suffixes. Must be
-	 * called by subclasses afterQuery instantiation.
+	 * called by subclasses after instantiation.
 	 */
 	protected void postInstantiate() {
 	}
@@ -2785,5 +2868,22 @@ public abstract class Loader {
 		public Statement getStatement() {
 			return statement;
 		}
+	}
+
+	/**
+	 * Remove distinct keyword from SQL statement if the query should not pass it through.
+	 * @param sql SQL string
+	 * @param parameters SQL parameters
+	 * @return SQL string
+	 */
+	protected String processDistinctKeyword(
+			String sql,
+			QueryParameters parameters) {
+		if ( !parameters.isPassDistinctThrough() ) {
+			if ( sql.startsWith( SELECT_DISTINCT ) ) {
+				return SELECT + sql.substring( SELECT_DISTINCT.length() );
+			}
+		}
+		return sql;
 	}
 }

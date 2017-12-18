@@ -18,10 +18,9 @@ import org.hibernate.MappingException;
 import org.hibernate.collection.internal.AbstractPersistentCollection;
 import org.hibernate.collection.spi.PersistentCollection;
 import org.hibernate.internal.CoreLogging;
+import org.hibernate.internal.CoreMessageLogger;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.pretty.MessageHelper;
-
-import org.jboss.logging.Logger;
 
 /**
  * We need an entry to tell us all about the current state
@@ -30,7 +29,7 @@ import org.jboss.logging.Logger;
  * @author Gavin King
  */
 public final class CollectionEntry implements Serializable {
-	private static final Logger LOG = CoreLogging.logger( CollectionEntry.class );
+	private static final CoreMessageLogger LOG = CoreLogging.messageLogger( CollectionEntry.class );
 
 	//ATTRIBUTES MAINTAINED BETWEEN FLUSH CYCLES
 
@@ -95,7 +94,7 @@ public final class CollectionEntry implements Serializable {
 
 		collection.setSnapshot(loadedKey, role, null);
 
-		//postInitialize() will be called afterQuery initialization
+		//postInitialize() will be called after initialization
 	}
 
 	/**
@@ -210,20 +209,20 @@ public final class CollectionEntry implements Serializable {
 	}
 
 	/**
-	 * Called afterQuery a successful flush
+	 * Called after a successful flush
 	 */
 	public void postFlush(PersistentCollection collection) throws HibernateException {
 		if ( isIgnore() ) {
 			ignore = false;
 		}
 		else if ( !isProcessed() ) {
-			throw new AssertionFailure( "collection [" + collection.getRole() + "] was not processed by flush()" );
+			throw new HibernateException( LOG.collectionNotProcessedByFlush( collection.getRole() ) );
 		}
 		collection.setSnapshot(loadedKey, role, snapshot);
 	}
 
 	/**
-	 * Called afterQuery execution of an action
+	 * Called after execution of an action
 	 */
 	public void afterAction(PersistentCollection collection) {
 		loadedKey = getCurrentKey();

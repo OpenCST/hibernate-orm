@@ -85,7 +85,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 			s.persist( another );
 		});
 		// The collection has been removed, but we can't add it again immediately using putFromLoad
-		Thread.sleep(1);
+		TIME_SERVICE.advance(1);
 
 		withTxSession(s -> {
 			Item loaded = s.load( Item.class, item.getId() );
@@ -388,7 +388,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 		SecondLevelCacheStatistics slcs = stats.getSecondLevelCacheStatistics( Item.class.getName() );
 		sessionFactory().getCache().evictEntityRegion( Item.class.getName() );
 
-		Thread.sleep(1);
+		TIME_SERVICE.advance(1);
 
 		assertEquals(0, slcs.getPutCount());
 		assertEquals( 0, slcs.getElementCountInMemory() );
@@ -438,8 +438,8 @@ public class ReadWriteTest extends ReadOnlyTest {
 
 		// Delay added to guarantee that query cache results won't be considered
 		// as not up to date due to persist session and query results from first
-		// query happening within same 100ms gap.
-		Thread.sleep( 100 );
+		// query happening simultaneously.
+		TIME_SERVICE.advance(60001);
 
 		withTxSession(s -> s.createQuery( "from Item" ).setCacheable( true ).list());
 
@@ -461,8 +461,8 @@ public class ReadWriteTest extends ReadOnlyTest {
 
 		// Delay added to guarantee that query cache results won't be considered
 		// as not up to date due to persist session and query results from first
-		// query happening within same 100ms gap.
-		Thread.sleep( 100 );
+		// query happening simultaneously.
+		TIME_SERVICE.advance(60001);
 
 		withTxSession(s -> {
 			s.createQuery("from Item").setCacheable(true).list();
@@ -477,9 +477,9 @@ public class ReadWriteTest extends ReadOnlyTest {
 	public void testNaturalIdCached() throws Exception {
 		saveSomeCitizens();
 
-		// Clear the cache beforeQuery the transaction begins
-		ReadWriteTest.this.cleanupCache();
-		Thread.sleep(10);
+		// Clear the cache before the transaction begins
+		cleanupCache();
+		TIME_SERVICE.advance(1);
 
 		withTxSession(s -> {
 			State france = ReadWriteTest.this.getState(s, "Ile de France");
@@ -533,7 +533,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 		assertEquals( "NaturalId Cache Puts", 2, stats.getNaturalIdCachePutCount() );
 		assertEquals( "NaturalId Cache Queries", 0, stats.getNaturalIdQueryExecutionCount() );
 
-		//Try NaturalIdLoadAccess afterQuery insert
+		//Try NaturalIdLoadAccess after insert
 		final Citizen citizen = withTxSessionApply(s -> {
 			State france = ReadWriteTest.this.getState(s, "Ile de France");
 			NaturalIdLoadAccess<Citizen> naturalIdLoader = s.byNaturalId(Citizen.class);
@@ -556,8 +556,8 @@ public class ReadWriteTest extends ReadOnlyTest {
 		});
 
 		// TODO: Clear caches manually via cache manager (it's faster!!)
-		this.cleanupCache();
-		Thread.sleep(10);
+		cleanupCache();
+		TIME_SERVICE.advance(1);
 		stats.setStatisticsEnabled( true );
 		stats.clear();
 
@@ -575,7 +575,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 			markRollbackOnly(s);
 		});
 
-		// Try NaturalIdLoadAccess afterQuery load
+		// Try NaturalIdLoadAccess after load
 		withTxSession(s -> {
 			State france = ReadWriteTest.this.getState(s, "Ile de France");
 			NaturalIdLoadAccess naturalIdLoader = s.byNaturalId(Citizen.class);
@@ -616,7 +616,7 @@ public class ReadWriteTest extends ReadOnlyTest {
 			assertEquals(2, slcStats.getPutCount());
 
 			cache.evictEntityRegions();
-			Thread.sleep(10);
+			TIME_SERVICE.advance(1);
 
 			assertEquals(0, slcStats.getElementCountInMemory());
 			assertFalse("2lc entity cache is expected to not contain Citizen id = " + citizens.get(0).getId(),

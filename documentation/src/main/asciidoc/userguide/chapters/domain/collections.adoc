@@ -380,6 +380,71 @@ include::{extrasdir}/collections-bidirectional-ordered-list-order-column-example
 
 When fetching the collection, Hibernate will use the fetched ordered columns to sort the elements according to the `@OrderColumn` mapping.
 
+[[collections-customizing-ordered-list-ordinal]]
+===== Customizing ordered list ordinal
+
+You can customize the ordinal of the underlying ordered list by using the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/ListIndexBase.html[`@ListIndexBase`] annotation.
+
+[[collections-customizing-ordered-list-ordinal-mapping-example]]
+.`@ListIndexBase` mapping example
+====
+[source,java]
+----
+include::{sourcedir}/OrderColumnListIndexBaseTest.java[tags=collections-customizing-ordered-list-ordinal-mapping-example,indent=0]
+----
+====
+
+When inserting two `Phone` records, Hibernate is going to start the List index from 100 this time.
+
+[[collections-customizing-ordered-list-ordinal-persist-example]]
+.`@ListIndexBase` persist example
+====
+[source,java]
+----
+include::{sourcedir}/OrderColumnListIndexBaseTest.java[tags=collections-customizing-ordered-list-ordinal-persist-example,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/collections-customizing-ordered-list-ordinal-persist-example.sql[]
+----
+====
+
+[[collections-customizing-ordered-by-sql-clause]]
+===== Customizing ORDER BY SQL clause
+
+While the JPA
+http://docs.oracle.com/javaee/7/api/javax/persistence/OrderBy.html[`@OrderBy`] annotation allows you to specify the entity attributes used for sorting
+when fetching the current annotated collection, the Hibernate specific
+https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/OrderBy.html[`@OrderBy`] annotation is used to specify a *SQL* clause instead.
+
+In the following example, the `@OrderBy` annotations uses the `CHAR_LENGTH` SQL function to order the `Article` entities by the size of their contents.
+
+[[collections-customizing-ordered-by-sql-clause-mapping-example]]
+.`@OrderBy` mapping example
+====
+[source,java]
+----
+include::{sourcedir}/OrderedBySQLTest.java[tags=collections-customizing-ordered-by-sql-clause-mapping-example,indent=0]
+----
+====
+
+When fetching the `articles` collection, Hibernate uses the ORDER BY SQL clause provided by the mapping:
+
+[[collections-customizing-ordered-by-sql-clause-fetching-example]]
+.`@OrderBy` fetching example
+====
+[source,java]
+----
+include::{sourcedir}/OrderedBySQLTest.java[tags=collections-customizing-ordered-by-sql-clause-fetching-example,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/collections-customizing-ordered-by-sql-clause-fetching-example.sql[]
+----
+====
+
 [[collections-set]]
 ==== Sets
 
@@ -427,7 +492,7 @@ include::{sourcedir}/BidirectionalSetTest.java[tags=collections-bidirectional-se
 ==== Sorted sets
 
 For sorted sets, the entity mapping must use the `SortedSet` interface instead.
-According to the `SortedSet` contract, all elements must implement the comparable interface and therefore provide the sorting logic.
+According to the `SortedSet` contract, all elements must implement the `Comparable` interface and therefore provide the sorting logic.
 
 [[collections-unidirectional-sorted-set]]
 ===== Unidirectional sorted sets
@@ -520,12 +585,126 @@ include::{extrasdir}/collections-map-value-type-entity-key-add-example.sql[]
 ----
 ====
 
+[[collections-map-custom-key-type]]
+===== Maps with a custom key type
+
+Hibernate defines the
+https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/annotations/MapKeyType.html[`@MapKeyType`] annotation
+which you can use to customize the `Map` key type.
+
+Considering you have the following tables in your database:
+
+[source,sql]
+----
+include::{extrasdir}/collections-map-custom-key-type-sql-example.sql[]
+----
+
+The `call_register` records the call history for every `person`.
+The `call_timestamp_epoch` column stores the phone call timestamp as a Unix timestamp since epoch.
+
+[NOTE]
+====
+The `@MapKeyColumn` annotation is used to define the table column holding the key
+while the `@Column` mapping gives the value of the `java.util.Map` in question.
+====
+
+Since we want to map all the calls by their associated `java.util.Date`, not by their timestamp since epoch which is a number, the entity mapping looks as follows:
+
+[[collections-map-custom-key-type-mapping-example]]
+.`@MapKeyType` mapping example
+====
+[source,java]
+----
+include::{sourcedir}/MapKeyTypeTest.java[tags=collections-map-custom-key-type-mapping-example,indent=0]
+----
+====
+
+The associated `TimestampEpochType` looks as follows:
+
+----
+include::{sourcedir}/type/TimestampEpochType.java[tags=collections-map-custom-key-type-mapping-example,indent=0]
+----
+
+The `TimestampEpochType` allows us to map a Unix timestamp since epoch to a `java.util.Date`.
+But, without the `@MapKeyType` Hibernate annotation, it would not be possible to customize the `Map` key type.
+
+[[collections-map-key-class]]
+===== Maps having an interface type as the key
+
+Considering you have the following `PhoneNumber` interface with an implementation given by the `MobilePhone` class type:
+
+[[collections-map-key-class-type-mapping-example]]
+.`PhoneNumber` interface and the `MobilePhone` class type
+====
+[source,java]
+----
+include::{sourcedir}/MapKeyClassTest.java[tags=collections-map-key-class-type-mapping-example,indent=0]
+----
+====
+
+If you want to use the `PhoneNumber` interface as a `java.util.Map` key, then you need to supply the
+http://docs.oracle.com/javaee/7/api/javax/persistence/MapKeyClass.html[`@MapKeyClass`] annotation as well.
+
+[[collections-map-key-class-mapping-example]]
+.`@MapKeyClass` mapping example
+====
+[source,java]
+----
+include::{sourcedir}/MapKeyClassTest.java[tags=collections-map-key-class-mapping-example,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/collections-map-key-class-mapping-example.sql[]
+----
+====
+
+When inserting a `Person` with a `callRegister` containing 2 `MobilePhone` references,
+Hibernate generates the following SQL statements:
+
+[[collections-map-key-class-persist-example]]
+.`@MapKeyClass` persist example
+====
+[source,java]
+----
+include::{sourcedir}/MapKeyClassTest.java[tags=collections-map-key-class-persist-example,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/collections-map-key-class-persist-example.sql[]
+----
+====
+
+When fetching a `Person` and accessing the `callRegister` `Map`,
+Hibernate generates the following SQL statements:
+
+[[collections-map-key-class-fetch-example]]
+.`@MapKeyClass` fetch example
+====
+[source,java]
+----
+include::{sourcedir}/MapKeyClassTest.java[tags=collections-map-key-class-fetch-example,indent=0]
+----
+
+[source,sql]
+----
+include::{extrasdir}/collections-map-key-class-fetch-example.sql[]
+----
+====
+
 [[collections-map-unidirectional]]
 ===== Unidirectional maps
 
 A unidirectional map exposes a parent-child association from the parent-side only.
+
 The following example shows a unidirectional map which also uses a `@MapKeyTemporal` annotation.
 The map key is a timestamp and it's taken from the child entity table.
+
+[NOTE]
+====
+The `@MapKey` annotation is used to define the entity attribute used as a key of the `java.util.Map` in question.
+====
 
 [[collections-map-unidirectional-example]]
 .Unidirectional Map
@@ -544,7 +723,8 @@ include::{extrasdir}/collections-map-unidirectional-example.sql[]
 [[collections-map-bidirectional]]
 ===== Bidirectional maps
 
-Like most bidirectional associations, this relationship is owned by the child-side while the parent is the inverse side abd can propagate its own state transitions to the child entities.
+Like most bidirectional associations, this relationship is owned by the child-side while the parent is the inverse side and can propagate its own state transitions to the child entities.
+
 In the following example, you can see that `@MapKeyEnumerated` was used so that the `Phone` enumeration becomes the map key.
 
 [[collections-map-bidirectional-example]]
@@ -564,9 +744,14 @@ include::{extrasdir}/collections-map-bidirectional-example.sql[]
 [[collections-array]]
 ==== Arrays
 
-When it comes to arrays, there is quite a difference between Java arrays and relational database array types (e.g. VARRAY, ARRAY).
-First, not all database systems implement the SQL-99 ARRAY type, and, for this reason, Hibernate doesn't support native database array types.
-Second, Java arrays are relevant for basic types only since storing multiple embeddables or entities should always be done using the Java Collection API.
+When discussing arrays, it is important to understand the distinction between SQL array types and Java arrays that are mapped as part of the application's domain model.
+
+Not all databases implement the SQL-99 ARRAY type and, for this reason,
+Hibernate doesn't support native database array types.
+
+Hibernate does support the mapping of arrays in the Java domain model - conceptually the same as mapping a List.
+However, it is important to realize that it is impossible for Hibernate to offer lazy-loading for arrays of entities and, for this reason,
+it is strongly recommended to map a "collection" of entities using a List rather than an array.
 
 [[collections-array-binary]]
 ==== Arrays as binary
@@ -574,7 +759,7 @@ Second, Java arrays are relevant for basic types only since storing multiple emb
 By default, Hibernate will choose a BINARY type, as supported by the current `Dialect`.
 
 [[collections-array-binary-example]]
-.Binary arrays
+.Arrays stored as binary
 ====
 [source,java]
 ----
@@ -585,6 +770,15 @@ include::{sourcedir}/ArrayTest.java[tags=collections-array-binary-example,indent
 ----
 include::{extrasdir}/collections-array-binary-example.sql[]
 ----
+====
+
+[NOTE]
+====
+If you want to map arrays such as `String[]` or `int[]` to database-specific array types like PostgreSQL `integer[]` or `text[]`,
+you need to write a custom Hibernate Type.
+
+Check out https://vladmihalcea.com/2017/06/21/how-to-map-java-and-sql-arrays-with-jpa-and-hibernate/[this article] for an example of how to write
+such a custom Hibernate Type.
 ====
 
 [[collections-as-basic]]
@@ -626,3 +820,46 @@ include::{extrasdir}/collections-comma-delimited-collection-lifecycle-example.sq
 ====
 
 See the Hibernate Integrations Guide for more details on developing custom value type mappings.
+
+[[collections-custom]]
+==== Custom collection types
+
+If you wish to use other collection types than `List`, `Set` or `Map`, like `Queue` for instance,
+you have to use a custom collection type, as illustrated by the following example:
+
+[[collections-custom-collection-mapping-example]]
+.Custom collection mapping example
+====
+[source,java]
+----
+include::{sourcedir}/QueueTest.java[tags=collections-custom-collection-mapping-example,indent=0]
+
+include::{sourcedir}/type/QueueType.java[tags=collections-custom-collection-mapping-example,indent=0]
+
+include::{sourcedir}/type/PersistentQueue.java[tags=collections-custom-collection-mapping-example,indent=0]
+----
+====
+
+[NOTE]
+====
+The reason why the `Queue` interface is not used for the entity attribute is because Hibernate only allows the following types:
+
+- `java.util.List`
+- `java.util.Set`
+- `java.util.Map`
+- `java.util.SortedSet`
+- `java.util.SortedMap`
+
+However, the custom collection type can still be customized as long as the base type is one of the aformentioned persistent types.
+====
+
+This way, the `Phone` collection can be used as a `java.util.Queue`:
+
+[[collections-custom-collection-example]]
+.Custom collection example
+====
+[source,java]
+----
+include::{sourcedir}/QueueTest.java[tags=collections-custom-collection-example,indent=0]
+----
+====

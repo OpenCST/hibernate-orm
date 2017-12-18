@@ -27,14 +27,12 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
  */
 public class BidirectionalComparatorSortedSetTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( BidirectionalComparatorSortedSetTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {

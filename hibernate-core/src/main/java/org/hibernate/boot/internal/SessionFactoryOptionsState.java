@@ -6,12 +6,11 @@
  */
 package org.hibernate.boot.internal;
 
-import java.util.Map;
-
 import org.hibernate.ConnectionReleaseMode;
 import org.hibernate.CustomEntityDirtinessStrategy;
 import org.hibernate.EntityMode;
 import org.hibernate.EntityNameResolver;
+import org.hibernate.HibernateException;
 import org.hibernate.Interceptor;
 import org.hibernate.MultiTenancyStrategy;
 import org.hibernate.NullPrecedence;
@@ -25,11 +24,17 @@ import org.hibernate.cfg.BaselineSessionEventsListenerBuilder;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.dialect.function.SQLFunction;
 import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
+import org.hibernate.jpa.JpaCompliance;
 import org.hibernate.loader.BatchFetchStyle;
 import org.hibernate.proxy.EntityNotFoundDelegate;
+import org.hibernate.query.criteria.LiteralHandlingMode;
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.hibernate.tuple.entity.EntityTuplizerFactory;
+
+import java.util.Map;
+import java.util.TimeZone;
+import java.util.function.Supplier;
 
 /**
  * Sort of a mutable SessionFactoryOptions used during SessionFactoryBuilder calls.
@@ -48,6 +53,14 @@ public interface SessionFactoryOptionsState {
 
 	boolean isJtaTransactionAccessEnabled();
 
+	boolean isAllowRefreshDetachedEntity();
+
+	boolean isAllowOutOfTransactionUpdateOperations();
+
+	boolean isReleaseResourcesOnCloseEnabled();
+
+	JpaCompliance getJpaCompliance();
+
 	Object getBeanManagerReference();
 
 	Object getValidatorFactoryReference();
@@ -64,7 +77,25 @@ public interface SessionFactoryOptionsState {
 
 	Interceptor getInterceptor();
 
+	/**
+	 * Returns an {@link Interceptor} class.
+	 *
+	 * @deprecated use {@link #getStatelessInterceptorImplementorSupplier()} instead.
+	 * @return {@link Interceptor} class
+	 */
+	@Deprecated
 	Class<? extends Interceptor> getStatelessInterceptorImplementor();
+
+	default Supplier<? extends Interceptor> getStatelessInterceptorImplementorSupplier() {
+		return () -> {
+			try {
+				return getStatelessInterceptorImplementor().newInstance();
+			}
+			catch (InstantiationException | IllegalAccessException e) {
+				throw new HibernateException( "Could not supply session-scoped SessionFactory Interceptor", e );
+			}
+		};
+	}
 
 	StatementInspector getStatementInspector();
 
@@ -110,7 +141,11 @@ public interface SessionFactoryOptionsState {
 
 	boolean isNamedQueryStartupCheckingEnabled();
 
+	boolean isConventionalJavaConstants();
+
 	boolean isProcedureParameterNullPassingEnabled();
+
+	boolean isCollectionJoinSubqueryRewriteEnabled();
 
 	boolean isSecondLevelCacheEnabled();
 
@@ -144,6 +179,8 @@ public interface SessionFactoryOptionsState {
 
 	PhysicalConnectionHandlingMode getPhysicalConnectionHandlingMode();
 
+	boolean connectionProviderDisablesAutoCommit();
+
 	/**
 	 * @deprecated Use {@link #getPhysicalConnectionHandlingMode()} instead
 	 */
@@ -161,4 +198,14 @@ public interface SessionFactoryOptionsState {
 	Map<String, SQLFunction> getCustomSqlFunctionMap();
 
 	boolean isPreferUserTransaction();
+
+	TimeZone getJdbcTimeZone();
+
+	boolean isQueryParametersValidationEnabled();
+
+	default LiteralHandlingMode getCriteriaLiteralHandlingMode() {
+		return LiteralHandlingMode.AUTO;
+	}
+
+	boolean jdbcStyleParamsZeroBased();
 }

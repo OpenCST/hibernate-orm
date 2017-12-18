@@ -74,7 +74,7 @@ public class NormalizingIdentifierHelperImpl implements IdentifierHelper {
 		}
 
 		if ( autoQuoteKeywords && isReservedWord( identifier.getText() ) ) {
-			log.tracef( "Forcing identifier [%s] to quoted as recognized reserveed word", identifier );
+			log.tracef( "Forcing identifier [%s] to quoted as recognized reserved word", identifier );
 			return Identifier.toIdentifier( identifier.getText(), true );
 		}
 
@@ -93,7 +93,7 @@ public class NormalizingIdentifierHelperImpl implements IdentifierHelper {
 
 	@Override
 	public Identifier applyGlobalQuoting(String text) {
-		return Identifier.toIdentifier( text, globallyQuoteIdentifiers && globallyQuoteIdentifiersSkipColumnDefinitions );
+		return Identifier.toIdentifier( text, globallyQuoteIdentifiers && !globallyQuoteIdentifiersSkipColumnDefinitions );
 	}
 
 	@Override

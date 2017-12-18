@@ -323,11 +323,14 @@ public abstract class AbstractEntityEntry implements Serializable, EntityEntry {
 
 	@Override
 	public void overwriteLoadedStateCollectionValue(String propertyName, PersistentCollection collection) {
-		assert propertyName != null;
-		assert loadedState != null;
+		// nothing to do if status is READ_ONLY
+		if ( getStatus() != Status.READ_ONLY ) {
+			assert propertyName != null;
+			assert loadedState != null;
 
-		final int propertyIndex = ( (UniqueKeyLoadable) persister ).getPropertyIndex( propertyName );
-		loadedState[propertyIndex] = collection;
+			final int propertyIndex = ( (UniqueKeyLoadable) persister ).getPropertyIndex( propertyName );
+			loadedState[propertyIndex] = collection;
+		}
 	}
 
 	@Override
@@ -339,7 +342,7 @@ public abstract class AbstractEntityEntry implements Serializable, EntityEntry {
 	@SuppressWarnings( {"SimplifiableIfStatement"})
 	private boolean isUnequivocallyNonDirty(Object entity) {
 		if ( entity instanceof SelfDirtinessTracker ) {
-			return ! ( (SelfDirtinessTracker) entity ).$$_hibernate_hasDirtyAttributes();
+			return ! persister.hasCollections() && ! ( (SelfDirtinessTracker) entity ).$$_hibernate_hasDirtyAttributes();
 		}
 
 		final CustomEntityDirtinessStrategy customEntityDirtinessStrategy =

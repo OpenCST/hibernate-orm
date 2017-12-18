@@ -7,6 +7,7 @@
 package org.hibernate.cfg;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import javax.persistence.Convert;
 import javax.persistence.Converts;
@@ -25,7 +26,7 @@ import org.hibernate.annotations.ManyToAny;
 import org.hibernate.annotations.MapKeyType;
 import org.hibernate.annotations.common.reflection.XClass;
 import org.hibernate.annotations.common.reflection.XProperty;
-import org.hibernate.boot.spi.AttributeConverterDescriptor;
+import org.hibernate.boot.model.convert.spi.ConverterDescriptor;
 import org.hibernate.boot.spi.MetadataBuildingContext;
 import org.hibernate.internal.CoreLogging;
 import org.hibernate.internal.CoreMessageLogger;
@@ -65,8 +66,8 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 		this.collection = collection;
 		setCurrentProperty( property );
 
-		this.elementAttributeConversionInfoMap = new HashMap<String, AttributeConversionInfo>();
-		this.keyAttributeConversionInfoMap = new HashMap<String, AttributeConversionInfo>();
+		this.elementAttributeConversionInfoMap = new HashMap<>();
+		this.keyAttributeConversionInfoMap = new HashMap<>();
 	}
 
 	public Collection getCollectionBinding() {
@@ -144,15 +145,30 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 		}
 		else {
 			// the @Convert named an attribute...
-			final String keyPath = removePrefix( info.getAttributeName(), "key" );
-			final String elementPath = removePrefix( info.getAttributeName(), "value" );
 
-			if ( canElementBeConverted && canKeyBeConverted && keyPath == null && elementPath == null ) {
-				// specified attributeName needs to have 'key.' or 'value.' prefix
-				throw new IllegalStateException(
-						"@Convert placed on Map attribute [" + collection.getRole()
-								+ "] must define attributeName of 'key' or 'value'"
-				);
+			// we have different "resolution rules" based on whether element and key can be converted
+			final String keyPath;
+			final String elementPath;
+
+			if ( canElementBeConverted && canKeyBeConverted ) {
+				keyPath = removePrefix( info.getAttributeName(), "key" );
+				elementPath = removePrefix( info.getAttributeName(), "value" );
+
+				if ( keyPath == null && elementPath == null ) {
+					// specified attributeName needs to have 'key.' or 'value.' prefix
+					throw new IllegalStateException(
+							"@Convert placed on Map attribute [" + collection.getRole()
+									+ "] must define attributeName of 'key' or 'value'"
+					);
+				}
+			}
+			else if ( canKeyBeConverted ) {
+				keyPath = removePrefix( info.getAttributeName(), "key", info.getAttributeName() );
+				elementPath = null;
+			}
+			else {
+				keyPath = null;
+				elementPath = removePrefix( info.getAttributeName(), "value", info.getAttributeName() );
 			}
 
 			if ( keyPath != null ) {
@@ -160,6 +176,17 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 			}
 			else if ( elementPath != null ) {
 				elementAttributeConversionInfoMap.put( elementPath, info );
+			}
+			else {
+				// specified attributeName needs to have 'key.' or 'value.' prefix
+				throw new IllegalStateException(
+						String.format(
+								Locale.ROOT,
+								"Could not determine how to apply @Convert(attributeName='%s') to collection [%s]",
+								info.getAttributeName(),
+								collection.getRole()
+						)
+				);
 			}
 		}
 	}
@@ -172,6 +199,10 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 	 * @return Path without prefix, or null, if path did not have the prefix.
 	 */
 	private String removePrefix(String path, String prefix) {
+		return removePrefix( path, prefix, null );
+	}
+
+	private String removePrefix(String path, String prefix, String defaultValue) {
 		if ( path.equals(prefix) ) {
 			return "";
 		}
@@ -180,7 +211,7 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 			return path.substring( prefix.length() + 1 );
 		}
 
-		return null;
+		return defaultValue;
 	}
 
 	@Override
@@ -254,6 +285,11 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 	}
 
 	public boolean isOrWithinEmbeddedId() {
+		return false;
+	}
+
+	@Override
+	public boolean isWithinElementCollection() {
 		return false;
 	}
 
@@ -345,7 +381,7 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 		}
 	}
 
-	public AttributeConverterDescriptor resolveElementAttributeConverterDescriptor(XProperty collectionXProperty, XClass elementXClass) {
+	public ConverterDescriptor resolveElementAttributeConverterDescriptor(XProperty collectionXProperty, XClass elementXClass) {
 		AttributeConversionInfo info = locateAttributeConversionInfo( "element" );
 		if ( info != null ) {
 			if ( info.isConversionDisabled() ) {
@@ -402,7 +438,7 @@ public class CollectionPropertyHolder extends AbstractPropertyHolder {
 		return null;
 	}
 
-	public AttributeConverterDescriptor mapKeyAttributeConverterDescriptor(XProperty mapXProperty, XClass keyXClass) {
+	public ConverterDescriptor mapKeyAttributeConverterDescriptor(XProperty mapXProperty, XClass keyXClass) {
 		AttributeConversionInfo info = locateAttributeConversionInfo( "key" );
 		if ( info != null ) {
 			if ( info.isConversionDisabled() ) {

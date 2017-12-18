@@ -34,6 +34,8 @@ import org.hibernate.internal.log.DeprecationLogger;
 import org.hibernate.service.ServiceRegistry;
 import org.hibernate.tool.schema.TargetType;
 import org.hibernate.tool.schema.internal.ExceptionHandlerCollectingImpl;
+import org.hibernate.tool.schema.internal.ExceptionHandlerHaltImpl;
+import org.hibernate.tool.schema.spi.ExceptionHandler;
 import org.hibernate.tool.schema.spi.ExecutionOptions;
 import org.hibernate.tool.schema.spi.SchemaManagementTool;
 import org.hibernate.tool.schema.spi.SchemaManagementToolCoordinator;
@@ -49,6 +51,8 @@ public class SchemaUpdate {
 	private static final CoreMessageLogger LOG = CoreLogging.messageLogger( SchemaUpdate.class );
 
 	private final List<Exception> exceptions = new ArrayList<Exception>();
+
+	boolean haltOnError = false;
 
 	private String outputFile;
 	private String delimiter;
@@ -75,7 +79,10 @@ public class SchemaUpdate {
 
 		final SchemaManagementTool tool = serviceRegistry.getService( SchemaManagementTool.class );
 
-		final ExceptionHandlerCollectingImpl exceptionHandler = new ExceptionHandlerCollectingImpl();
+		final ExceptionHandler exceptionHandler = haltOnError
+				? ExceptionHandlerHaltImpl.INSTANCE
+				: new ExceptionHandlerCollectingImpl();
+
 		final ExecutionOptions executionOptions = SchemaManagementToolCoordinator.buildExecutionOptions(
 				config,
 				exceptionHandler
@@ -87,20 +94,23 @@ public class SchemaUpdate {
 			tool.getSchemaMigrator( config ).doMigration( metadata, executionOptions, targetDescriptor );
 		}
 		finally {
-			exceptions.addAll( exceptionHandler.getExceptions() );
+			if ( exceptionHandler instanceof ExceptionHandlerCollectingImpl ) {
+				exceptions.addAll( ( (ExceptionHandlerCollectingImpl) exceptionHandler ).getExceptions() );
+			}
 		}
 	}
 
 	/**
-	 * Returns a List of all Exceptions which occured during the export.
+	 * Returns a List of all Exceptions which occurred during the export.
 	 *
-	 * @return A List containing the Exceptions occured during the export
+	 * @return A List containing the Exceptions occurred during the export
 	 */
 	public List getExceptions() {
 		return exceptions;
 	}
 
 	public SchemaUpdate setHaltOnError(boolean haltOnError) {
+		this.haltOnError = haltOnError;
 		return this;
 	}
 

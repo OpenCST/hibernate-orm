@@ -14,6 +14,7 @@ import javax.persistence.Lob;
 
 import org.hibernate.AnnotationException;
 import org.hibernate.HibernateException;
+import org.hibernate.annotations.AttributeAccessor;
 import org.hibernate.annotations.Generated;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.NaturalId;
@@ -160,7 +161,7 @@ public class PropertyBinder {
 			);
 		}
 		if ( !declaringClassSet ) {
-			throw new AssertionFailure( "declaringClass has not been set beforeQuery a bind" );
+			throw new AssertionFailure( "declaringClass has not been set before a bind" );
 		}
 	}
 
@@ -273,6 +274,11 @@ public class PropertyBinder {
 
 		if ( property != null ) {
 			prop.setValueGenerationStrategy( determineValueGenerationStrategy( property ) );
+
+			if ( property.isAnnotationPresent( AttributeAccessor.class ) ) {
+				final AttributeAccessor accessor = property.getAnnotation( AttributeAccessor.class );
+				prop.setPropertyAccessorName( accessor.value() );
+			}
 		}
 
 		NaturalId naturalId = property != null ? property.getAnnotation( NaturalId.class ) : null;

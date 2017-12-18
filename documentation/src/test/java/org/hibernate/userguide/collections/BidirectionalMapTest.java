@@ -26,7 +26,7 @@ import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
@@ -68,6 +68,7 @@ public class BidirectionalMapTest extends BaseEntityManagerFunctionalTestCase {
 
 		@Id
 		private Long id;
+
 		@OneToMany(mappedBy = "person", cascade = CascadeType.ALL, orphanRemoval = true)
 		@MapKey(name = "type")
 		@MapKeyEnumerated

@@ -166,6 +166,10 @@ public class CriteriaImpl implements Criteria, Serializable {
 	}
 	@Override
 	public Criteria setFetchMode(String associationPath, FetchMode mode) {
+		String rootAliasPathPrefix = rootAlias + ".";
+		if (rootAlias != null && !associationPath.startsWith(rootAliasPathPrefix)) {
+			associationPath = rootAliasPathPrefix + associationPath;
+		}
 		fetchModes.put( associationPath, mode );
 		return this;
 	}
@@ -252,6 +256,7 @@ public class CriteriaImpl implements Criteria, Serializable {
 	public Integer getMaxResults() {
 		return maxResults;
 	}
+
 	@Override
 	public Criteria setMaxResults(int maxResults) {
 		this.maxResults = maxResults;

@@ -20,14 +20,12 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
  */
 public class OptimisticLockingTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( OptimisticLockingTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {
@@ -60,6 +58,7 @@ public class OptimisticLockingTest extends BaseEntityManagerFunctionalTestCase {
 		} );
 	}
 
+	//tag::locking-optimistic-entity-mapping-example[]
 	@Entity(name = "Person")
 	public static class Person {
 
@@ -75,6 +74,9 @@ public class OptimisticLockingTest extends BaseEntityManagerFunctionalTestCase {
 		private long version;
 		//end::locking-optimistic-version-number-example[]
 
+		//Getters and setters are omitted for brevity
+
+		//end::locking-optimistic-entity-mapping-example[]
 		public Long getId() {
 			return id;
 		}
@@ -98,7 +100,9 @@ public class OptimisticLockingTest extends BaseEntityManagerFunctionalTestCase {
 		public void setVersion(long version) {
 			this.version = version;
 		}
+	//tag::locking-optimistic-entity-mapping-example[]
 	}
+	//end::locking-optimistic-entity-mapping-example[]
 
 	@Entity(name = "Phone")
 	public static class Phone {
@@ -144,10 +148,6 @@ public class OptimisticLockingTest extends BaseEntityManagerFunctionalTestCase {
 
 		public Date getVersion() {
 			return version;
-		}
-
-		public void setVersion(Date version) {
-			this.version = version;
 		}
 	}
 }

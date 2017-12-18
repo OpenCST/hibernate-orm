@@ -9,11 +9,7 @@ package org.hibernate.test.legacy;
 import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
 import org.hibernate.Hibernate;
 import org.hibernate.LockMode;
@@ -21,8 +17,11 @@ import org.hibernate.ObjectNotFoundException;
 import org.hibernate.Query;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
+import org.hibernate.cfg.Configuration;
+import org.hibernate.cfg.Environment;
 import org.hibernate.criterion.Example;
 import org.hibernate.criterion.Restrictions;
+import org.hibernate.dialect.AbstractHANADialect;
 import org.hibernate.dialect.HSQLDialect;
 import org.hibernate.dialect.MckoiDialect;
 import org.hibernate.dialect.MySQLDialect;
@@ -30,7 +29,7 @@ import org.hibernate.dialect.SAPDBDialect;
 import org.hibernate.engine.jdbc.connections.spi.JdbcConnectionAccess;
 import org.hibernate.engine.jdbc.spi.JdbcServices;
 import org.hibernate.jdbc.AbstractWork;
-
+import org.hibernate.testing.SkipForDialect;
 import org.hibernate.testing.SkipLog;
 import org.junit.Test;
 
@@ -52,6 +51,15 @@ public class MasterDetailTest extends LegacyTestCase {
 			"legacy/UpDown.hbm.xml",
 			"legacy/Eye.hbm.xml"
 		};
+	}
+
+	@Override
+	public void configure(Configuration cfg) {
+		super.configure(cfg);
+		Properties props = new Properties();
+		props.put( Environment.ORDER_INSERTS, "true" );
+		props.put( Environment.STATEMENT_BATCH_SIZE, "10" );
+		cfg.addProperties( props );
 	}
 
 	@Test
@@ -425,13 +433,19 @@ public class MasterDetailTest extends LegacyTestCase {
 		assertTrue( q.list().size()==2 );
 		q.setInteger("id2", -1);
 		assertTrue( q.list().size()==0 );
-		q = s.createFilter( master.getDetails(), "where this.id in (:ids)" );
+
 		list = new ArrayList();
 		list.add(did);
 		list.add( new Long(-1) );
+
+		q = s.createFilter( master.getDetails(), "where this.id in (:ids)" );
 		q.setParameterList("ids", list);
 		assertTrue( q.list().size()==1 );
+
+		q = s.createFilter( master.getDetails(), "where this.id in (:ids)" );
+		q.setParameterList("ids", list);
 		assertTrue( q.iterate().hasNext() );
+
 		assertTrue( s.createFilter( master.getDetails(), "where this.id > -1" ).list().size()==2 );
 		assertTrue( s.createFilter( master.getDetails(), "select this.master where this.id > -1" ).list().size()==2 );
 		assertTrue(
@@ -658,6 +672,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCollectionReplaceOnUpdate() throws Exception {
 		Session s = openSession();
 		Transaction t = s.beginTransaction();
@@ -702,6 +717,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCollectionReplace2() throws Exception {
 		Session s = openSession();
 		Transaction t = s.beginTransaction();
@@ -740,6 +756,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCollectionReplace() throws Exception {
 		Session s = openSession();
 		Transaction t = s.beginTransaction();
@@ -784,6 +801,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCategories() throws Exception {
 		Session s = openSession();
 		s.beginTransaction();
@@ -844,6 +862,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCollectionRefresh() throws Exception {
 		Session s = openSession();
 		s.beginTransaction();
@@ -894,6 +913,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testCachedCollectionRefresh() throws Exception {
 		if ( isSerializableIsolationEnforced() ) {
 			SkipLog.reportSkip( "SERIALIZABLE isolation", "cached collection refreshing" );
@@ -1105,6 +1125,7 @@ public class MasterDetailTest extends LegacyTestCase {
 	}
 
 	@Test
+	@SkipForDialect(value = AbstractHANADialect.class, comment = " HANA doesn't support tables consisting of only a single auto-generated column")
 	public void testPolymorphicCriteria() throws Exception {
 		Session s = openSession();
 		Transaction txn = s.beginTransaction();

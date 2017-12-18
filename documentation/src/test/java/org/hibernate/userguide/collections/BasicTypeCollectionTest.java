@@ -20,14 +20,12 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInHibernate;
+import static org.hibernate.testing.transaction.TransactionUtil.doInHibernate;
 
 /**
  * @author Vlad Mihalcea
  */
 public class BasicTypeCollectionTest extends BaseCoreFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( BasicTypeCollectionTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {

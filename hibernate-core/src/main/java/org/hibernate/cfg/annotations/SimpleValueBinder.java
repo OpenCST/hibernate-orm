@@ -30,7 +30,7 @@ import org.hibernate.annotations.common.reflection.ClassLoadingException;
 import org.hibernate.annotations.common.reflection.XClass;
 import org.hibernate.annotations.common.reflection.XProperty;
 import org.hibernate.boot.model.TypeDefinition;
-import org.hibernate.boot.spi.AttributeConverterDescriptor;
+import org.hibernate.boot.model.convert.spi.ConverterDescriptor;
 import org.hibernate.boot.spi.MetadataBuildingContext;
 import org.hibernate.cfg.AccessType;
 import org.hibernate.cfg.BinderHelper;
@@ -39,6 +39,8 @@ import org.hibernate.cfg.Ejb3JoinColumn;
 import org.hibernate.cfg.NotYetImplementedException;
 import org.hibernate.cfg.PkDrivenByDefaultMapsIdSecondPass;
 import org.hibernate.cfg.SetSimpleValueTypeSecondPass;
+import org.hibernate.dialect.Dialect;
+import org.hibernate.engine.jdbc.spi.JdbcServices;
 import org.hibernate.internal.CoreMessageLogger;
 import org.hibernate.internal.util.StringHelper;
 import org.hibernate.mapping.SimpleValue;
@@ -85,7 +87,7 @@ public class SimpleValueBinder {
 	private XProperty xproperty;
 	private AccessType accessType;
 
-	private AttributeConverterDescriptor attributeConverterDescriptor;
+	private ConverterDescriptor attributeConverterDescriptor;
 
 	public void setReferencedEntityName(String referencedEntityName) {
 		this.referencedEntityName = referencedEntityName;
@@ -97,6 +99,9 @@ public class SimpleValueBinder {
 
 	public void setVersion(boolean isVersion) {
 		this.isVersion = isVersion;
+		if ( isVersion && simpleValue != null ) {
+			simpleValue.makeVersion();
+		}
 	}
 
 	public void setTimestampVersionType(String versionType) {
@@ -130,7 +135,7 @@ public class SimpleValueBinder {
 
 	//TODO execute it lazily to be order safe
 
-	public void setType(XProperty property, XClass returnedClass, String declaringClassName, AttributeConverterDescriptor attributeConverterDescriptor) {
+	public void setType(XProperty property, XClass returnedClass, String declaringClassName, ConverterDescriptor attributeConverterDescriptor) {
 		if ( returnedClass == null ) {
 			// we cannot guess anything
 			return;
@@ -147,8 +152,10 @@ public class SimpleValueBinder {
 		typeParameters.clear();
 		String type = BinderHelper.ANNOTATION_STRING_DEFAULT;
 
-		isNationalized = property.isAnnotationPresent( Nationalized.class )
-				|| buildingContext.getBuildingOptions().useNationalizedCharacterData();
+		if ( getDialect().supportsNationalizedTypes() ) {
+			isNationalized = property.isAnnotationPresent( Nationalized.class )
+					|| buildingContext.getBuildingOptions().useNationalizedCharacterData();
+		}
 
 		Type annType = null;
 		if ( (!key && property.isAnnotationPresent( Type.class ))
@@ -274,7 +281,8 @@ public class SimpleValueBinder {
 				type = StringNVarcharType.INSTANCE.getName();
 				explicitType = type;
 			}
-			else if ( buildingContext.getBuildingOptions().getReflectionManager().equals( returnedClassOrElement, Character.class ) ) {
+			else if ( buildingContext.getBuildingOptions().getReflectionManager().equals( returnedClassOrElement, Character.class ) ||
+					buildingContext.getBuildingOptions().getReflectionManager().equals( returnedClassOrElement, char.class ) ) {
 				if ( isArray ) {
 					// nvarchar
 					type = StringNVarcharType.INSTANCE.getName();
@@ -289,7 +297,7 @@ public class SimpleValueBinder {
 
 		// implicit type will check basic types and Serializable classes
 		if ( columns == null ) {
-			throw new AssertionFailure( "SimpleValueBinder.setColumns should be set beforeQuery SimpleValueBinder.setType" );
+			throw new AssertionFailure( "SimpleValueBinder.setColumns should be set before SimpleValueBinder.setType" );
 		}
 
 		if ( BinderHelper.ANNOTATION_STRING_DEFAULT.equals( type ) ) {
@@ -304,7 +312,15 @@ public class SimpleValueBinder {
 		applyAttributeConverter( property, attributeConverterDescriptor );
 	}
 
-	private void applyAttributeConverter(XProperty property, AttributeConverterDescriptor attributeConverterDescriptor) {
+	private Dialect getDialect() {
+		return buildingContext.getBuildingOptions()
+				.getServiceRegistry()
+				.getService( JdbcServices.class )
+				.getJdbcEnvironment()
+				.getDialect();
+	}
+
+	private void applyAttributeConverter(XProperty property, ConverterDescriptor attributeConverterDescriptor) {
 		if ( attributeConverterDescriptor == null ) {
 			return;
 		}
@@ -397,6 +413,9 @@ public class SimpleValueBinder {
 			table = columns[0].getTable();
 		}
 		simpleValue = new SimpleValue( buildingContext.getMetadataCollector(), table );
+		if ( isVersion ) {
+			simpleValue.makeVersion();
+		}
 		if ( isNationalized ) {
 			simpleValue.makeNationalized();
 		}

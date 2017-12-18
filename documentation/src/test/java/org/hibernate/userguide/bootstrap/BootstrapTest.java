@@ -6,6 +6,7 @@
  */
 package org.hibernate.userguide.bootstrap;
 
+import java.io.File;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,9 +16,12 @@ import java.util.Map;
 import java.util.Properties;
 import javax.persistence.AttributeConverter;
 import javax.persistence.Entity;
+import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.Id;
 import javax.persistence.Persistence;
+import javax.persistence.PersistenceContext;
+import javax.persistence.PersistenceProperty;
 import javax.persistence.PersistenceUnit;
 import javax.persistence.SharedCacheMode;
 import javax.persistence.ValidationMode;
@@ -27,6 +31,7 @@ import javax.persistence.spi.PersistenceUnitTransactionType;
 import javax.sql.DataSource;
 
 import org.hibernate.EmptyInterceptor;
+import org.hibernate.FlushMode;
 import org.hibernate.SessionFactory;
 import org.hibernate.SessionFactoryObserver;
 import org.hibernate.boot.Metadata;
@@ -127,6 +132,12 @@ public class BootstrapTest {
 			// important if using runtime bytecode-enhancement
 			sources.addAnnotatedClassName( "org.hibernate.example.Customer" );
 
+			// Read package-level metadata.
+			sources.addPackage( "hibernate.example" );
+
+			// Read package-level metadata.
+			sources.addPackage( MyEntity.class.getPackage() );
+
 			// Adds the named hbm.xml resource as a source: which performs the
 			// classpath lookup and parses the XML
 			sources.addResource( "org/hibernate/example/Order.hbm.xml" );
@@ -134,12 +145,28 @@ public class BootstrapTest {
 			// Adds the named JPA orm.xml resource as a source: which performs the
 			// classpath lookup and parses the XML
 			sources.addResource( "org/hibernate/example/Product.orm.xml" );
+
+			// Read all mapping documents from a directory tree.
+			// Assumes that any file named *.hbm.xml is a mapping document.
+			sources.addDirectory( new File( ".") );
+
+			// Read mappings from a particular XML file
+			sources.addFile( new File( "./mapping.xml") );
+
+			// Read all mappings from a jar file.
+			// Assumes that any file named *.hbm.xml is a mapping document.
+			sources.addJar( new File( "./entities.jar") );
+
+			// Read a mapping as an application resource using the convention that a class named foo.bar.MyEntity is
+			// mapped by a file named foo/bar/MyEntity.hbm.xml which can be resolved as a classpath resource.
+			sources.addClass( MyEntity.class );
 			//end::bootstrap-bootstrap-native-registry-MetadataSources-example[]
 		}
 		catch (Exception ignore) {
 
 		}
 	}
+
 
 	@Test
 	public void test_bootstrap_bootstrap_native_metadata_source_example() {
@@ -384,6 +411,31 @@ public class BootstrapTest {
 	@PersistenceUnit
 	private EntityManagerFactory emf;
 	//end::bootstrap-jpa-compliant-PersistenceUnit-example[]
+
+	//tag::bootstrap-jpa-compliant-PersistenceUnit-configurable-example[]
+	@PersistenceUnit(
+		unitName = "CRM"
+	)
+	private EntityManagerFactory entityManagerFactory;
+	//end::bootstrap-jpa-compliant-PersistenceUnit-configurable-example[]
+
+	//tag::bootstrap-jpa-compliant-PersistenceContext-example[]
+	@PersistenceContext
+	private EntityManager em;
+	//end::bootstrap-jpa-compliant-PersistenceContext-example[]
+
+	//tag::bootstrap-jpa-compliant-PersistenceContext-configurable-example[]
+	@PersistenceContext(
+		unitName = "CRM",
+		properties = {
+			@PersistenceProperty(
+				name="org.hibernate.flushMode",
+				value= "MANUAL"
+			)
+		}
+	)
+	private EntityManager entityManager;
+	//end::bootstrap-jpa-compliant-PersistenceContext-configurable-example[]
 
 	//tag::bootstrap-native-PersistenceUnitInfoImpl-example[]
 	public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {

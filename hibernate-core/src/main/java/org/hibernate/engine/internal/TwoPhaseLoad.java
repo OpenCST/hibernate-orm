@@ -55,7 +55,7 @@ public final class TwoPhaseLoad {
 	}
 
 	/**
-	 * Register the "hydrated" state of an entity instance, afterQuery the first step of 2-phase loading.
+	 * Register the "hydrated" state of an entity instance, after the first step of 2-phase loading.
 	 *
 	 * Add the "hydrated state" (an array) of an uninitialized entity to the session. We don't try
 	 * to resolve any associations yet, because there might be other entities waiting to be
@@ -147,12 +147,26 @@ public final class TwoPhaseLoad {
 		final Type[] types = persister.getPropertyTypes();
 		for ( int i = 0; i < hydratedState.length; i++ ) {
 			final Object value = hydratedState[i];
-			if ( value!=LazyPropertyInitializer.UNFETCHED_PROPERTY && value!= PropertyAccessStrategyBackRefImpl.UNKNOWN ) {
+			if ( value == LazyPropertyInitializer.UNFETCHED_PROPERTY ) {
+				// IMPLEMENTATION NOTE: This is a lazy property on a bytecode-enhanced entity.
+				// hydratedState[i] needs to remain LazyPropertyInitializer.UNFETCHED_PROPERTY so that
+				// setPropertyValues() below (ultimately AbstractEntityTuplizer#setPropertyValues) works properly
+				// No resolution is necessary, unless the lazy property is a collection.
+				if ( types[i].isCollectionType() ) {
+					// IMPLEMENTATION NOTE: this is a lazy collection property on a bytecode-enhanced entity.
+					// HHH-10989: We need to resolve the collection so that a CollectionReference is added to StatefulPersistentContext.
+					// As mentioned above, hydratedState[i] needs to remain LazyPropertyInitializer.UNFETCHED_PROPERTY
+					// so do not assign the resolved, unitialized PersistentCollection back to hydratedState[i].
+					types[i].resolve( value, session, entity );
+				}
+			}
+			else if ( value!= PropertyAccessStrategyBackRefImpl.UNKNOWN ) {
+				// we know value != LazyPropertyInitializer.UNFETCHED_PROPERTY
 				hydratedState[i] = types[i].resolve( value, session, entity );
 			}
 		}
 
-		//Must occur afterQuery resolving identifiers!
+		//Must occur after resolving identifiers!
 		if ( session.isEventSource() ) {
 			preLoadEvent.setEntity( entity ).setState( hydratedState ).setId( id ).setPersister( persister );
 
@@ -169,7 +183,7 @@ public final class TwoPhaseLoad {
 		persister.setPropertyValues( entity, hydratedState );
 
 		final SessionFactoryImplementor factory = session.getFactory();
-		if ( persister.hasCache() && session.getCacheMode().isPutEnabled() ) {
+		if ( persister.canWriteToCache() && session.getCacheMode().isPutEnabled() ) {
 
 			if ( debugEnabled ) {
 				LOG.debugf(
@@ -254,7 +268,7 @@ public final class TwoPhaseLoad {
 					hydratedState,
 					persister.getPropertyTypes(),
 					persister.getPropertyUpdateability(),
-					//afterQuery setting values to object
+					//after setting values to object
 					hydratedState,
 					session
 			);
@@ -276,7 +290,7 @@ public final class TwoPhaseLoad {
 	}
 	
 	/**
-	 * PostLoad cannot occur during initializeEntity, as that call occurs *beforeQuery*
+	 * PostLoad cannot occur during initializeEntity, as that call occurs *before*
 	 * the Set collections are added to the persistence context by Loader.
 	 * Without the split, LazyInitializationExceptions can occur in the Entity's
 	 * postLoad if it acts upon the collection.
@@ -321,7 +335,7 @@ public final class TwoPhaseLoad {
 
 	/**
 	 * Add an uninitialized instance of an entity class, as a placeholder to ensure object
-	 * identity. Must be called beforeQuery <tt>postHydrate()</tt>.
+	 * identity. Must be called before <tt>postHydrate()</tt>.
 	 *
 	 * Create a "temporary" entry for a newly instantiated entity. The entity is uninitialized,
 	 * but we need the mapping from id to instance in order to guarantee uniqueness.

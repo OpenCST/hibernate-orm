@@ -32,6 +32,8 @@ import org.hibernate.hql.internal.ast.tree.AggregatedSelectExpression;
 import org.hibernate.hql.internal.ast.tree.FromElement;
 import org.hibernate.hql.internal.ast.tree.QueryNode;
 import org.hibernate.hql.internal.ast.tree.SelectClause;
+import org.hibernate.hql.spi.NamedParameterInformation;
+import org.hibernate.hql.spi.ParameterInformation;
 import org.hibernate.internal.IteratorImpl;
 import org.hibernate.internal.util.collections.ArrayHelper;
 import org.hibernate.loader.BasicLoader;
@@ -157,7 +159,7 @@ public class QueryLoader extends BasicLoader {
 			entityAliases[i] = element.getClassAlias();
 			sqlAliasByEntityAlias.put( entityAliases[i], sqlAliases[i] );
 			// TODO should we just collect these like with the collections above?
-			sqlAliasSuffixes[i] = ( size == 1 ) ? "" : Integer.toString( i ) + "_";
+			sqlAliasSuffixes[i] = ( size == 1 ) ? "" : (Integer.toString( i ) + "_").intern();
 //			sqlAliasSuffixes[i] = element.getColumnAliasSuffix();
 			includeInSelect[i] = !element.isFetch();
 			if ( includeInSelect[i] ) {
@@ -333,7 +335,7 @@ public class QueryLoader extends BasicLoader {
 		}
 
 		//		there are other conditions we might want to add here, such as checking the result types etc
-		//		but those are better served afterQuery we have redone the SQL generation to use ASTs.
+		//		but those are better served after we have redone the SQL generation to use ASTs.
 
 
 		// we need both the set of locks and the columns to reference in locks
@@ -599,7 +601,22 @@ public class QueryLoader extends BasicLoader {
 	 */
 	@Override
 	public int[] getNamedParameterLocs(String name) throws QueryException {
-		return queryTranslator.getParameterTranslations().getNamedParameterSqlLocations( name );
+		ParameterInformation info = queryTranslator.getParameterTranslations().getNamedParameterInformation( name );
+		if ( info == null ) {
+			try {
+				info = queryTranslator.getParameterTranslations().getPositionalParameterInformation(
+						Integer.parseInt( name )
+				);
+			}
+			catch (Exception ignore) {
+			}
+		}
+
+		if ( info == null ) {
+			throw new QueryException( "Unrecognized parameter label : " + name );
+		}
+
+		return info.getSourceLocations();
 	}
 
 	/**

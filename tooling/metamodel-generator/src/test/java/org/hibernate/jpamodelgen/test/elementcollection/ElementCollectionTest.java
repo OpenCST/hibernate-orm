@@ -10,8 +10,10 @@ import org.hibernate.jpamodelgen.test.util.CompilationTest;
 import org.hibernate.jpamodelgen.test.util.TestForIssue;
 import org.hibernate.jpamodelgen.test.util.WithClasses;
 import org.hibernate.jpamodelgen.test.util.WithMappingFiles;
+
 import org.junit.Test;
 
+import static org.hibernate.jpamodelgen.test.util.TestUtil.assertListAttributeTypeInMetaModelFor;
 import static org.hibernate.jpamodelgen.test.util.TestUtil.assertMapAttributesInMetaModelFor;
 import static org.hibernate.jpamodelgen.test.util.TestUtil.assertMetamodelClassGeneratedFor;
 import static org.hibernate.jpamodelgen.test.util.TestUtil.assertNoSourceFileGeneratedFor;
@@ -58,5 +60,23 @@ public class ElementCollectionTest extends CompilationTest {
 		assertMapAttributesInMetaModelFor(
 				Hostel.class, "cleaners", Room.class, Cleaner.class, "Wrong type in map attribute."
 		);
+	}
+
+	@Test
+	@TestForIssue(jiraKey = "HHH-11004")
+	@WithClasses({ OfficeBuilding.class })
+	public void testArrayValueElementCollection() {
+		assertMetamodelClassGeneratedFor( OfficeBuilding.class );
+		assertMapAttributesInMetaModelFor(
+				OfficeBuilding.class, "doorCodes", Integer.class, byte[].class, "Wrong type in map attribute."
+		);
+	}
+
+	@Test
+	@TestForIssue(jiraKey = "HHH-11871")
+	@WithClasses({ Homework.class})
+	public void testListAttributeWithGenericTypeForJavaBeanGetter() {
+		assertMetamodelClassGeneratedFor( Homework.class );
+		assertListAttributeTypeInMetaModelFor( Homework.class, "paths", String.class, "ListAttribute generic type should be String" );
 	}
 }

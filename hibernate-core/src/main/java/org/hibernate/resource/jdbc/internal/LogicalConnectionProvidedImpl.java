@@ -28,10 +28,6 @@ public class LogicalConnectionProvidedImpl extends AbstractLogicalConnectionImpl
 	private final boolean initiallyAutoCommit;
 	private boolean closed;
 
-	public LogicalConnectionProvidedImpl(Connection providedConnection) {
-		this( providedConnection, new ResourceRegistryStandardImpl() );
-	}
-
 	public LogicalConnectionProvidedImpl(Connection providedConnection, ResourceRegistry resourceRegistry) {
 		this.resourceRegistry = resourceRegistry;
 		if ( providedConnection == null ) {
@@ -89,7 +85,7 @@ public class LogicalConnectionProvidedImpl extends AbstractLogicalConnectionImpl
 	public LogicalConnectionImplementor makeShareableCopy() {
 		errorIfClosed();
 
-		return new LogicalConnectionProvidedImpl( providedConnection );
+		return new LogicalConnectionProvidedImpl( providedConnection, new ResourceRegistryStandardImpl() );
 	}
 
 	@Override
@@ -130,7 +126,7 @@ public class LogicalConnectionProvidedImpl extends AbstractLogicalConnectionImpl
 		}
 		else if ( providedConnection != null ) {
 			throw new IllegalArgumentException(
-					"cannot reconnect to a new user-supplied connection because currently connected; must disconnect beforeQuery reconnecting."
+					"cannot reconnect to a new user-supplied connection because currently connected; must disconnect before reconnecting."
 			);
 		}
 		providedConnection = connection;

@@ -10,6 +10,8 @@ import java.io.InputStream;
 
 import org.hibernate.MappingException;
 import org.hibernate.boot.MetadataSources;
+import org.hibernate.boot.registry.BootstrapServiceRegistry;
+import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder;
 import org.hibernate.cfg.Configuration;
 import org.hibernate.cfg.Environment;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
@@ -35,7 +37,6 @@ import static org.junit.Assert.fail;
  */
 @TestForIssue( jiraKey = "HHH-4812" )
 public class FetchProfileTest extends BaseUnitTestCase {
-	private static final Logger log = Logger.getLogger( FetchProfileTest.class );
 
 	private ServiceRegistry serviceRegistry;
 
@@ -85,6 +86,12 @@ public class FetchProfileTest extends BaseUnitTestCase {
 		catch ( MappingException e ) {
             log.trace("success");
 		}
+		finally {
+			ServiceRegistry metaServiceRegistry = metadataSources.getServiceRegistry();
+			if(metaServiceRegistry instanceof BootstrapServiceRegistry) {
+				BootstrapServiceRegistryBuilder.destroy( metaServiceRegistry );
+			}
+		}
 	}
 
 	@Test
@@ -101,6 +108,12 @@ public class FetchProfileTest extends BaseUnitTestCase {
 		catch ( MappingException e ) {
             log.trace("success");
 		}
+		finally {
+			ServiceRegistry metaServiceRegistry = metadataSources.getServiceRegistry();
+			if(metaServiceRegistry instanceof BootstrapServiceRegistry) {
+				BootstrapServiceRegistryBuilder.destroy( metaServiceRegistry );
+			}
+		}
 	}
 
 	@Test
@@ -116,6 +129,12 @@ public class FetchProfileTest extends BaseUnitTestCase {
 		}
 		catch ( MappingException e ) {
             log.trace("success");
+		}
+		finally {
+			ServiceRegistry metaServiceRegistry = metadataSources.getServiceRegistry();
+			if(metaServiceRegistry instanceof BootstrapServiceRegistry) {
+				BootstrapServiceRegistryBuilder.destroy( metaServiceRegistry );
+			}
 		}
 	}
 
@@ -151,6 +170,12 @@ public class FetchProfileTest extends BaseUnitTestCase {
 		}
 		catch ( MappingException e ) {
 			log.trace("success");
+		}
+		finally {
+			ServiceRegistry metaServiceRegistry = metadataSources.getServiceRegistry();
+			if(metaServiceRegistry instanceof BootstrapServiceRegistry) {
+				BootstrapServiceRegistryBuilder.destroy( metaServiceRegistry );
+			}
 		}
 	}
 

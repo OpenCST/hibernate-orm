@@ -7,12 +7,13 @@
 package org.hibernate.cfg;
 
 import javax.persistence.Column;
+import javax.persistence.ForeignKey;
 import javax.persistence.JoinColumn;
 import javax.persistence.JoinTable;
 
 import org.hibernate.annotations.common.reflection.XClass;
 import org.hibernate.annotations.common.reflection.XProperty;
-import org.hibernate.boot.spi.AttributeConverterDescriptor;
+import org.hibernate.boot.model.convert.spi.ConverterDescriptor;
 import org.hibernate.mapping.Join;
 import org.hibernate.mapping.KeyValue;
 import org.hibernate.mapping.PersistentClass;
@@ -42,6 +43,11 @@ public interface PropertyHolder {
 	 */
 	boolean isOrWithinEmbeddedId();
 
+	/**
+	 * Return true if this component is withing an @ElementCollection.
+	 */
+	boolean isWithinElementCollection();
+
 	PersistentClass getPersistentClass();
 
 	boolean isComponent();
@@ -61,6 +67,14 @@ public interface PropertyHolder {
 	 * return null if the column is not overridden, or an array of column if true
 	 */
 	JoinColumn[] getOverriddenJoinColumn(String propertyName);
+
+	/**
+	 * return null if hte foreign key is not overridden, or the foreign key if true
+	 */
+	default ForeignKey getOverriddenForeignKey(String propertyName) {
+		// todo: does this necessarily need to be a default method?
+		return null;
+	}
 
 	/**
 	 * return
@@ -92,5 +106,5 @@ public interface PropertyHolder {
 	 * @param property
 	 * @return
 	 */
-	AttributeConverterDescriptor resolveAttributeConverterDescriptor(XProperty property);
+	ConverterDescriptor resolveAttributeConverterDescriptor(XProperty property);
 }

@@ -25,7 +25,9 @@ import org.hibernate.internal.FilterImpl;
 import org.hibernate.internal.util.EntityPrinter;
 import org.hibernate.internal.util.collections.ArrayHelper;
 import org.hibernate.query.internal.QueryParameterBindingsImpl;
+import org.hibernate.query.spi.QueryParameterBindings;
 import org.hibernate.transform.ResultTransformer;
+import org.hibernate.type.ComponentType;
 import org.hibernate.type.Type;
 
 import org.jboss.logging.Logger;
@@ -44,6 +46,7 @@ public final class QueryParameters {
 	private Type[] positionalParameterTypes;
 	private Object[] positionalParameterValues;
 	private Map<String,TypedValue> namedParameters;
+
 	private LockOptions lockOptions;
 	private RowSelection rowSelection;
 	private boolean cacheable;
@@ -60,6 +63,7 @@ public final class QueryParameters {
 	private boolean callable;
 	private boolean autodiscovertypes;
 	private boolean isNaturalKeyLookup;
+	private boolean passDistinctThrough = true;
 
 	private final ResultTransformer resultTransformer; // why is all others non final ?
 
@@ -227,7 +231,7 @@ public final class QueryParameters {
 	}
 
 	public QueryParameters(
-			QueryParameterBindingsImpl queryParameterBindings,
+			QueryParameterBindings queryParameterBindings,
 			LockOptions lockOptions,
 			RowSelection selection,
 			final boolean isReadOnlyInitialized,
@@ -422,14 +426,14 @@ public final class QueryParameters {
 	/**
 	 * Should entities and proxies loaded by the Query be put in read-only mode? The
 	 * read-only/modifiable setting must be initialized via QueryParameters#setReadOnly(boolean)
-	 * beforeQuery calling this method.
+	 * before calling this method.
 	 *
 	 * @see QueryParameters#isReadOnlyInitialized()
 	 * @see QueryParameters#isReadOnly(SharedSessionContractImplementor)
 	 * @see QueryParameters#setReadOnly(boolean)
 	 *
 	 * The read-only/modifiable setting has no impact on entities/proxies returned by the
-	 * query that existed in the session beforeQuery the query was executed.
+	 * query that existed in the session before the query was executed.
 	 *
 	 * @return true, entities and proxies loaded by the Query will be put in read-only mode
 	 *         false, entities and proxies loaded by the Query will be put in modifiable mode
@@ -449,7 +453,7 @@ public final class QueryParameters {
 	 * then the default read-only/modifiable setting for the persistence context is returned instead.
 	 * <p/>
 	 * The read-only/modifiable setting has no impact on entities/proxies returned by the
-	 * query that existed in the session beforeQuery the query was executed.
+	 * query that existed in the session before the query was executed.
 	 *
 	 * @param session The originating session
 	 *
@@ -461,7 +465,7 @@ public final class QueryParameters {
 	 * @see org.hibernate.engine.spi.PersistenceContext#isDefaultReadOnly()
 	 *
 	 * The read-only/modifiable setting has no impact on entities/proxies returned by the
-	 * query that existed in the session beforeQuery the query was executed.
+	 * query that existed in the session before the query was executed.
 	 *
 	 */
 	public boolean isReadOnly(SharedSessionContractImplementor session) {
@@ -474,7 +478,7 @@ public final class QueryParameters {
 	 * Set the read-only/modifiable mode for entities and proxies loaded by the query.
 	 * <p/>
 	 * The read-only/modifiable setting has no impact on entities/proxies returned by the
-	 * query that existed in the session beforeQuery the query was executed.
+	 * query that existed in the session before the query was executed.
 	 *
 	 * @param readOnly if {@code true}, entities and proxies loaded by the query will be put in read-only mode; if
 	 * {@code false}, entities and proxies loaded by the query will be put in modifiable mode
@@ -501,6 +505,22 @@ public final class QueryParameters {
 		return autodiscovertypes;
 	}
 
+	/**
+	 * Check if this query should pass the {@code distinct} to the database.
+	 * @return the query passes {@code distinct} to the database
+	 */
+	public boolean isPassDistinctThrough() {
+		return passDistinctThrough;
+	}
+
+	/**
+	 * Set if this query should pass the {@code distinct} to the database.
+	 * @param passDistinctThrough the query passes {@code distinct} to the database
+	 */
+	public void setPassDistinctThrough(boolean passDistinctThrough) {
+		this.passDistinctThrough = passDistinctThrough;
+	}
+
 	public void processFilters(String sql, SharedSessionContractImplementor session) {
 		processFilters( sql, session.getLoadQueryInfluencers().getEnabledFilters(), session.getFactory() );
 	}
@@ -518,7 +538,6 @@ public final class QueryParameters {
 			StringBuilder result = new StringBuilder();
 			List parameters = new ArrayList();
 			List parameterTypes = new ArrayList();
-
 			int positionalIndex = 0;
 			while ( tokens.hasMoreTokens() ) {
 				final String token = tokens.nextToken();
@@ -547,18 +566,45 @@ public final class QueryParameters {
 					}
 				}
 				else {
+					result.append( token );
 					if ( "?".equals( token ) && positionalIndex < getPositionalParameterValues().length ) {
+						final Type type = getPositionalParameterTypes()[positionalIndex];
+						if ( type.isComponentType() ) {
+							// should process tokens till reaching the number of "?" corresponding to the
+							// numberOfParametersCoveredBy of the compositeType
+							int paramIndex = 1;
+							final int numberOfParametersCoveredBy = getNumberOfParametersCoveredBy( ((ComponentType) type).getSubtypes() );
+							while ( paramIndex < numberOfParametersCoveredBy ) {
+								final String nextToken = tokens.nextToken();
+								if ( "?".equals( nextToken ) ) {
+									paramIndex++;
+								}
+								result.append( nextToken );
+							}
+						}
 						parameters.add( getPositionalParameterValues()[positionalIndex] );
-						parameterTypes.add( getPositionalParameterTypes()[positionalIndex] );
+						parameterTypes.add( type );
 						positionalIndex++;
 					}
-					result.append( token );
 				}
 			}
 			processedPositionalParameterValues = parameters.toArray();
 			processedPositionalParameterTypes = ( Type[] ) parameterTypes.toArray( new Type[parameterTypes.size()] );
 			processedSQL = result.toString();
 		}
+	}
+
+	private int getNumberOfParametersCoveredBy(Type[] subtypes) {
+		int numberOfParameters = 0;
+		for ( Type type : subtypes ) {
+			if ( type.isComponentType() ) {
+				numberOfParameters = numberOfParameters + getNumberOfParametersCoveredBy( ((ComponentType) type).getSubtypes() );
+			}
+			else {
+				numberOfParameters++;
+			}
+		}
+		return numberOfParameters;
 	}
 
 	public String getFilteredSQL() {
@@ -608,6 +654,7 @@ public final class QueryParameters {
 		copy.processedSQL = this.processedSQL;
 		copy.processedPositionalParameterTypes = this.processedPositionalParameterTypes;
 		copy.processedPositionalParameterValues = this.processedPositionalParameterValues;
+		copy.passDistinctThrough = this.passDistinctThrough;
 		return copy;
 	}
 

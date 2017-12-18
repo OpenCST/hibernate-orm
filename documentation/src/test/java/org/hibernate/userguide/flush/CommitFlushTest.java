@@ -25,14 +25,12 @@ import org.jboss.logging.Logger;
 
 import static org.junit.Assert.assertTrue;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
  */
 public class CommitFlushTest extends BaseEntityManagerFunctionalTestCase {
-
-    private static final Logger log = Logger.getLogger( CommitFlushTest.class);
 
     @Override
     protected Class<?>[] getAnnotatedClasses() {

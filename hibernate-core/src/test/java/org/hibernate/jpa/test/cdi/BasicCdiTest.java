@@ -6,59 +6,105 @@
  */
 package org.hibernate.jpa.test.cdi;
 
-import javax.inject.Inject;
-import javax.persistence.Entity;
-import javax.persistence.EntityListeners;
-import javax.persistence.EntityManager;
-import javax.persistence.Id;
-import javax.persistence.PrePersist;
-import javax.persistence.Table;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import javax.enterprise.inject.se.SeContainer;
+import javax.enterprise.inject.se.SeContainerInitializer;
+import javax.persistence.Entity;
+import javax.persistence.EntityListeners;
+import javax.persistence.Id;
+import javax.persistence.PrePersist;
+import javax.persistence.Table;
+
+import org.hibernate.boot.MetadataSources;
+import org.hibernate.boot.registry.BootstrapServiceRegistry;
+import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder;
+import org.hibernate.boot.registry.StandardServiceRegistry;
+import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
+import org.hibernate.cfg.AvailableSettings;
+import org.hibernate.engine.spi.SessionFactoryImplementor;
+import org.hibernate.jpa.event.spi.JpaIntegrator;
+import org.hibernate.tool.schema.Action;
 
 import org.junit.Test;
 
+import static org.hibernate.testing.transaction.TransactionUtil2.inTransaction;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 /**
  * @author Steve Ebersole
  */
-public class BasicCdiTest extends BaseCdiIntegrationTest {
+public class BasicCdiTest {
+
 	private static int count;
-
-	@Override
-	public Class[] getCdiBeans() {
-		return new Class[] { EventQueue.class };
-	}
-
-	@Override
-	protected Class<?>[] getAnnotatedClasses() {
-		return new Class[] { MyEntity.class };
-	}
 
 	@Test
 	@SuppressWarnings("unchecked")
 	public void testIt() {
+		final SeContainerInitializer cdiInitializer = SeContainerInitializer.newInstance()
+				.disableDiscovery()
+				.addBeanClasses( Monitor.class, EventQueue.class, Event.class );
+
 		count = 0;
 
-		EntityManager em = getOrCreateEntityManager();
-		em.getTransaction().begin();
-		em.persist( new MyEntity( 1 ) );
-		em.getTransaction().commit();
-		em.close();
+		try ( final SeContainer cdiContainer = cdiInitializer.initialize() ) {
+			BootstrapServiceRegistry bsr = new BootstrapServiceRegistryBuilder()
+					.applyIntegrator( new JpaIntegrator() )
+					.build();
 
-		assertEquals( 1, count );
+			final StandardServiceRegistry ssr = new StandardServiceRegistryBuilder( bsr )
+					.applySetting( AvailableSettings.CDI_BEAN_MANAGER, cdiContainer.getBeanManager() )
+					.applySetting( AvailableSettings.DELAY_CDI_ACCESS, "true" )
+					.applySetting( AvailableSettings.HBM2DDL_AUTO, Action.CREATE_DROP )
+					.build();
 
-		em = getOrCreateEntityManager();
-		em.getTransaction().begin();
-		em.remove( em.getReference( MyEntity.class, 1 ) );
-		em.getTransaction().commit();
-		em.close();
+			final SessionFactoryImplementor sessionFactory;
+
+			try {
+				sessionFactory = (SessionFactoryImplementor) new MetadataSources( ssr )
+						.addAnnotatedClass( MyEntity.class )
+						.buildMetadata()
+						.getSessionFactoryBuilder()
+						.build();
+			}
+			catch ( Exception e ) {
+				StandardServiceRegistryBuilder.destroy( ssr );
+				throw e;
+			}
+
+			try {
+				inTransaction(
+						sessionFactory,
+						session -> session.persist( new MyEntity( 1 ) )
+				);
+
+				assertEquals( 1, count );
+
+				inTransaction(
+						sessionFactory,
+						session -> {
+							MyEntity it = session.find( MyEntity.class, 1 );
+							assertNotNull( it );
+						}
+				);
+			}
+			finally {
+				inTransaction(
+						sessionFactory,
+						session -> {
+							session.createQuery( "delete MyEntity" ).executeUpdate();
+						}
+				);
+
+				sessionFactory.close();
+			}
+		}
 	}
 
-	@Entity
+	@Entity( name = "MyEntity" )
 	@EntityListeners( Monitor.class )
 	@Table(name = "my_entity")
 	public static class MyEntity {
@@ -95,7 +141,7 @@ public class BasicCdiTest extends BaseCdiIntegrationTest {
 
 		public void addEvent(Event anEvent) {
 			if ( events == null ) {
-				events = new ArrayList<Event>();
+				events = new ArrayList<>();
 			}
 			events.add( anEvent );
 			count++;
@@ -129,7 +175,7 @@ public class BasicCdiTest extends BaseCdiIntegrationTest {
 	public static class Monitor {
 		private final EventQueue eventQueue;
 
-		@Inject
+		@javax.inject.Inject
 		public Monitor(EventQueue eventQueue) {
 			this.eventQueue = eventQueue;
 		}

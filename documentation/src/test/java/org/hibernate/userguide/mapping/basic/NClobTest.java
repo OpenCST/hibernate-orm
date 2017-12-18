@@ -17,6 +17,7 @@ import javax.persistence.Lob;
 
 import org.hibernate.Session;
 import org.hibernate.annotations.Nationalized;
+import org.hibernate.dialect.AbstractHANADialect;
 import org.hibernate.dialect.MySQL5Dialect;
 import org.hibernate.dialect.PostgreSQL81Dialect;
 import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
@@ -24,7 +25,7 @@ import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 import org.hibernate.testing.SkipForDialect;
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -34,7 +35,8 @@ import static org.junit.Assert.fail;
 @SkipForDialect(
 		value = {
 				PostgreSQL81Dialect.class,
-				MySQL5Dialect.class
+				MySQL5Dialect.class,
+				AbstractHANADialect.class
 		},
 		comment = "@see https://hibernate.atlassian.net/browse/HHH-10693 and https://hibernate.atlassian.net/browse/HHH-10695"
 )

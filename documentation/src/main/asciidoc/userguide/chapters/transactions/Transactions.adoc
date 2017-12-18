@@ -25,8 +25,17 @@ which are built by the `org.hibernate.resource.transaction.spi.TransactionCoordi
 `TransactionCoordinatorBuilder` represents a strategy for dealing with transactions whereas TransactionCoordinator represents one instance of that strategy related to a Session.
 Which `TransactionCoordinatorBuilder` implementation to use is defined by the `hibernate.transaction.coordinator_class` setting.
 
-`jdbc` (the default):: Manages transactions via calls to `java.sql.Connection`
+`jdbc` (the default for non-JPA applications):: Manages transactions via calls to `java.sql.Connection`
 `jta`:: Manages transactions via JTA. See <<chapters/bootstrap/Bootstrap.adoc#bootstrap-jpa-compliant,Java EE bootstrapping>>
+
+If a JPA application does not provide a setting for `hibernate.transaction.coordinator_class`, Hibernate will 
+automatically build the proper transaction coordinator based on the transaction type for the persistence unit.
+
+If a non-JPA application does not provide a setting for `hibernate.transaction.coordinator_class`, Hibernate 
+will use `jdbc` as the default. This default will cause problems if the application actually uses JTA-based transactions.
+A non-JPA application that uses JTA-based transactions should explicitly set `hibernate.transaction.coordinator_class=jta` 
+or provide a custom `org.hibernate.resource.transaction.TransactionCoordinatorBuilder` that builds a 
+`org.hibernate.resource.transaction.TransactionCoordinator` that properly coordinates with JTA-based transactions. 
 
 [NOTE]
 ====
@@ -72,6 +81,7 @@ Hibernate provides many implementations of the `JtaPlatform` contract, all with 
 `OC4J`:: `JtaPlatform` for Oracle's OC4J container.
 `Orion`:: `JtaPlatform` for the Orion Application Server.
 `Resin`:: `JtaPlatform` for the Resin Application Server.
+`SapNetWeaver`:: `JtaPlatform` for the SAP NetWeaver Application Server.
 `SunOne`:: `JtaPlatform` for the SunOne Application Server.
 `Weblogic`:: `JtaPlatform` for the Weblogic Application Server.
 `WebSphere`:: `JtaPlatform` for older versions of the WebSphere Application Server.
@@ -152,11 +162,16 @@ See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hi
 It defines a single method, `currentSession()`, by which the implementation is responsible for tracking the current contextual session.
 Out-of-the-box, Hibernate comes with three implementations of this interface:
 
-`org.hibernate.context.internal.JTASessionContext`:: current sessions are tracked and scoped by a `JTA` transaction.
-The processing here is exactly the same as in the older JTA-only approach. See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/JTASessionContext.html[Javadocs] for more details.
-* `org.hibernate.context.internal.ThreadLocalSessionContext`:current sessions are tracked by thread of execution. See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/ThreadLocalSessionContext.html[Javadocs] for more details.
-* `org.hibernate.context.internal.ManagedSessionContext`: current sessions are tracked by thread of execution.
-However, you are responsible to bind and unbind a `Session` instance with static methods on this class: it does not open, flush, or close a `Session`. See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/ManagedSessionContext.html[Javadocs] for details.
+`org.hibernate.context.internal.JTASessionContext`::
+current sessions are tracked and scoped by a `JTA` transaction.
+The processing here is exactly the same as in the older JTA-only approach.
+See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/JTASessionContext.html[Javadocs] for more details.
+`org.hibernate.context.internal.ThreadLocalSessionContext`::
+current sessions are tracked by thread of execution. See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/ThreadLocalSessionContext.html[Javadocs] for more details.
+`org.hibernate.context.internal.ManagedSessionContext`::
+current sessions are tracked by thread of execution.
+However, you are responsible to bind and unbind a `Session` instance with static methods on this class; it does not open, flush, or close a `Session`.
+See the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/context/internal/ManagedSessionContext.html[Javadocs] for details.
 
 Typically, the value of this parameter would just name the implementation class to use.
 For the three out-of-the-box implementations, however, there are three corresponding short names: _jta_, _thread_, and _managed_.

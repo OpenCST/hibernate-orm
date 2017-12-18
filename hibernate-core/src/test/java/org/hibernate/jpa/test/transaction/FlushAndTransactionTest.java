@@ -7,14 +7,17 @@
 package org.hibernate.jpa.test.transaction;
 
 import java.util.List;
+import java.util.Map;
 import javax.persistence.EntityManager;
 import javax.persistence.LockModeType;
 import javax.persistence.OptimisticLockException;
 import javax.persistence.PersistenceException;
+import javax.persistence.Query;
 import javax.persistence.RollbackException;
 import javax.persistence.TransactionRequiredException;
 
 import org.hibernate.Session;
+import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.jpa.HibernateEntityManagerFactory;
 import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 import org.hibernate.stat.Statistics;
@@ -225,6 +228,7 @@ public class FlushAndTransactionTest extends BaseEntityManagerFunctionalTestCase
 		catch ( PersistenceException e ) {
 			//success
 		}
+
 		try {
 			em.getTransaction().commit();
 			fail( "Commit should be rollbacked" );
@@ -287,10 +291,35 @@ public class FlushAndTransactionTest extends BaseEntityManagerFunctionalTestCase
 		em.close();
 	}
 
+	@Test
+	public void testSetRollbackOnlyAndFlush() throws Exception {
+		Book book = new Book();
+		book.name = "The jungle book";
+		EntityManager em = getOrCreateEntityManager();
+		em.getTransaction().begin();
+		em.getTransaction().setRollbackOnly();
+		em.persist( book );
+		em.flush();
+		em.getTransaction().rollback();
+		em.getTransaction().begin();
+		Query query = em.createQuery( "SELECT b FROM Book b WHERE b.name = :name" );
+		query.setParameter( "name", book.name );
+		assertEquals( 0, query.getResultList().size() );
+		em.getTransaction().commit();
+		em.close();
+	}
+
+
 	@Override
 	public Class[] getAnnotatedClasses() {
 		return new Class[] {
 				Book.class
 		};
+	}
+
+	@Override
+	protected void addConfigOptions(Map options) {
+		super.addConfigOptions( options );
+		options.put( AvailableSettings.JPA_TRANSACTION_COMPLIANCE, "true" );
 	}
 }

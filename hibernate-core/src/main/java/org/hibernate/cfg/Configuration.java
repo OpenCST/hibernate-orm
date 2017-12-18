@@ -639,7 +639,7 @@ public class Configuration {
 
 	/**
 	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
-	 * SessionFactory will be immutable, so changes made to this Configuration afterQuery building the
+	 * SessionFactory will be immutable, so changes made to this Configuration after building the
 	 * SessionFactory will not affect it.
 	 *
 	 * @param serviceRegistry The registry of services to be used in creating this session factory.
@@ -697,11 +697,14 @@ public class Configuration {
 		if ( getSessionFactoryObserver() != null ) {
 			sessionFactoryBuilder.addSessionFactoryObservers( getSessionFactoryObserver() );
 		}
-		if ( entityNotFoundDelegate != null ) {
-			sessionFactoryBuilder.applyEntityNotFoundDelegate( entityNotFoundDelegate );
+		if ( getEntityNotFoundDelegate() != null ) {
+			sessionFactoryBuilder.applyEntityNotFoundDelegate( getEntityNotFoundDelegate() );
 		}
-		if ( entityTuplizerFactory != null ) {
-			sessionFactoryBuilder.applyEntityTuplizerFactory( entityTuplizerFactory );
+		if ( getEntityTuplizerFactory() != null ) {
+			sessionFactoryBuilder.applyEntityTuplizerFactory( getEntityTuplizerFactory() );
+		}
+		if ( getCurrentTenantIdentifierResolver() != null ) {
+			sessionFactoryBuilder.applyCurrentTenantIdentifierResolver( getCurrentTenantIdentifierResolver() );
 		}
 
 		return sessionFactoryBuilder.build();
@@ -710,7 +713,7 @@ public class Configuration {
 
 	/**
 	 * Create a {@link SessionFactory} using the properties and mappings in this configuration. The
-	 * {@link SessionFactory} will be immutable, so changes made to {@code this} {@link Configuration} afterQuery
+	 * {@link SessionFactory} will be immutable, so changes made to {@code this} {@link Configuration} after
 	 * building the {@link SessionFactory} will not affect it.
 	 *
 	 * @return The build {@link SessionFactory}

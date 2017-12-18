@@ -14,6 +14,7 @@ import javax.persistence.ConstraintMode;
 import org.hibernate.AnnotationException;
 import org.hibernate.MappingException;
 import org.hibernate.annotations.ForeignKey;
+import org.hibernate.annotations.LazyGroup;
 import org.hibernate.annotations.common.reflection.XClass;
 import org.hibernate.boot.spi.MetadataBuildingContext;
 import org.hibernate.cfg.annotations.PropertyBinder;
@@ -102,7 +103,14 @@ public class OneToOneSecondPass implements SecondPass {
 		binder.setValue( value );
 		binder.setCascade( cascadeStrategy );
 		binder.setAccessType( inferredData.getDefaultAccess() );
+
+		final LazyGroup lazyGroupAnnotation = inferredData.getProperty().getAnnotation( LazyGroup.class );
+		if ( lazyGroupAnnotation != null ) {
+			binder.setLazyGroup( lazyGroupAnnotation.value() );
+		}
+
 		Property prop = binder.makeProperty();
+		prop.setOptional( optional );
 		if ( BinderHelper.isEmptyAnnotationValue( mappedBy ) ) {
 			/*
 			 * we need to check if the columns are in the right order

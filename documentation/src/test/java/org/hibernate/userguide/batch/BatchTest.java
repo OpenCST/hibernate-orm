@@ -27,15 +27,13 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertEquals;
 
 /**
  * @author Vlad Mihalcea
  */
 public class BatchTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( BatchTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {
@@ -206,7 +204,7 @@ public class BatchTest extends BaseEntityManagerFunctionalTestCase {
 				Person Person = new Person( String.format( "Person %d", i ) );
 				entityManager.persist( Person );
 
-				if ( i % batchSize == 0 ) {
+				if ( i > 0 && i % batchSize == 0 ) {
 					//flush a batch of inserts and release memory
 					entityManager.flush();
 					entityManager.clear();

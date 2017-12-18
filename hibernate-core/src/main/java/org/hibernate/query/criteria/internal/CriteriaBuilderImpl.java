@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiFunction;
 import javax.persistence.Tuple;
 import javax.persistence.criteria.CollectionJoin;
 import javax.persistence.criteria.CompoundSelection;
@@ -49,7 +50,7 @@ import org.hibernate.query.criteria.internal.expression.NullifExpression;
 import org.hibernate.query.criteria.internal.expression.ParameterExpressionImpl;
 import org.hibernate.query.criteria.internal.expression.SearchedCaseExpression;
 import org.hibernate.query.criteria.internal.expression.SimpleCaseExpression;
-import org.hibernate.query.criteria.internal.expression.SizeOfCollectionExpression;
+import org.hibernate.query.criteria.internal.expression.SizeOfPluralAttributeExpression;
 import org.hibernate.query.criteria.internal.expression.SubqueryComparisonModifierExpression;
 import org.hibernate.query.criteria.internal.expression.UnaryArithmeticOperation;
 import org.hibernate.query.criteria.internal.expression.function.AbsFunction;
@@ -584,8 +585,7 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 	public <T> ParameterExpression<T> parameter(Class<T> paramClass) {
 		return new ParameterExpressionImpl<T>(
 				this,
-				paramClass,
-				sessionFactory.resolveParameterBindType( paramClass )
+				paramClass
 		);
 	}
 
@@ -594,8 +594,7 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 		return new ParameterExpressionImpl<T>(
 				this,
 				paramClass,
-				name,
-				sessionFactory.resolveParameterBindType( paramClass )
+				name
 		);
 	}
 
@@ -1111,31 +1110,31 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, T, V extends T> Join<X, V> treat(Join<X, T> join, Class<V> type) {
-		return ( (JoinImplementor) join ).treatAs( type );
+		return treat( join, type, (j, t) -> ((JoinImplementor) j).treatAs( t ) );
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, T, E extends T> CollectionJoin<X, E> treat(CollectionJoin<X, T> join, Class<E> type) {
-		return ( (CollectionJoinImplementor) join ).treatAs( type );
+		return treat( join, type, (j, t) -> ((CollectionJoinImplementor) j).treatAs( t ) );
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, T, E extends T> SetJoin<X, E> treat(SetJoin<X, T> join, Class<E> type) {
-		return ( (SetJoinImplementor) join ).treatAs( type );
+		return treat( join, type, (j, t) -> ((SetJoinImplementor) j).treatAs( t ) );
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, T, E extends T> ListJoin<X, E> treat(ListJoin<X, T> join, Class<E> type) {
-		return ( (ListJoinImplementor) join ).treatAs( type );
+		return treat( join, type, (j, t) -> ((ListJoinImplementor) join).treatAs( type ) );
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, K, T, V extends T> MapJoin<X, K, V> treat(MapJoin<X, K, T> join, Class<V> type) {
-		return ( (MapJoinImplementor) join ).treatAs( type );
+		return treat( join, type, (j, t) -> ((MapJoinImplementor) join).treatAs( type ) );
 	}
 
 	@Override
@@ -1147,9 +1146,8 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 	@Override
 	@SuppressWarnings("unchecked")
 	public <X, T extends X> Root<T> treat(Root<X> root, Class<T> type) {
-		return ( (RootImpl) root ).treatAs( type );
+		return ((RootImpl) root).treatAs( type );
 	}
-
 
 	// subqueries ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1277,7 +1275,7 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 	@Override
 	public <C extends Collection<?>> Expression<Integer> size(C c) {
 		int size = c == null ? 0 : c.size();
-		return new LiteralExpression<Integer>(this, Integer.class, size);
+		return new LiteralExpression<>(this, Integer.class, size);
 	}
 
 	@Override
@@ -1286,7 +1284,7 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 			return size( ( (LiteralExpression<C>) exp ).getLiteral() );
 		}
 		else if ( PluralAttributePath.class.isInstance(exp) ) {
-			return new SizeOfCollectionExpression<C>(this, (PluralAttributePath<C>) exp );
+			return new SizeOfPluralAttributeExpression( this, (PluralAttributePath<C>) exp );
 		}
 		// TODO : what other specific types?  any?
 		throw new IllegalArgumentException("unknown collection expression type [" + exp.getClass().getName() + "]" );
@@ -1294,12 +1292,12 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 
 	@Override
 	public <V, M extends Map<?, V>> Expression<Collection<V>> values(M map) {
-		return new LiteralExpression<Collection<V>>( this, map.values() );
+		return new LiteralExpression<>( this, map.values() );
 	}
 
 	@Override
 	public <K, M extends Map<K, ?>> Expression<Set<K>> keys(M map) {
-		return new LiteralExpression<Set<K>>( this, map.keySet() );
+		return new LiteralExpression<>( this, map.keySet() );
 	}
 
 	@Override
@@ -1326,10 +1324,10 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 					"unknown collection expression type [" + collectionExpression.getClass().getName() + "]"
 			);
 		}
-		return new MemberOfPredicate<E, C>(
+		return new MemberOfPredicate<>(
 				this,
 				e,
-				(PluralAttributePath<C>)collectionExpression
+				(PluralAttributePath<C>) collectionExpression
 		);
 	}
 
@@ -1345,15 +1343,61 @@ public class CriteriaBuilderImpl implements HibernateCriteriaBuilder, Serializab
 					"unknown collection expression type [" + collectionExpression.getClass().getName() + "]"
 			);
 		}
-		return new MemberOfPredicate<E, C>(
+		return new MemberOfPredicate<>(
 				this,
 				elementExpression,
-				(PluralAttributePath<C>)collectionExpression
+				(PluralAttributePath<C>) collectionExpression
 		);
 	}
 
 	@Override
 	public <E, C extends Collection<E>> Predicate isNotMember(Expression<E> eExpression, Expression<C> cExpression) {
 		return isMember(eExpression, cExpression).not();
+	}
+
+	@Override
+	@SuppressWarnings({ "unchecked" })
+	public <M extends Map<?, ?>> Predicate isMapEmpty(Expression<M> mapExpression) {
+		if ( PluralAttributePath.class.isInstance( mapExpression ) ) {
+			return new IsEmptyPredicate( this, (PluralAttributePath<M>) mapExpression );
+		}
+		// TODO : what other specific types?  any?
+		throw new IllegalArgumentException(
+				"unknown collection expression type [" + mapExpression.getClass().getName() + "]"
+		);
+	}
+
+	@Override
+	public <M extends Map<?, ?>> Predicate isMapNotEmpty(Expression<M> mapExpression) {
+		return isMapEmpty( mapExpression ).not();
+	}
+
+	@Override
+	public <M extends Map<?, ?>> Expression<Integer> mapSize(Expression<M> mapExpression) {
+		if ( LiteralExpression.class.isInstance( mapExpression ) ) {
+			return mapSize( ( (LiteralExpression<M>) mapExpression ).getLiteral() );
+		}
+		else if ( PluralAttributePath.class.isInstance( mapExpression ) ) {
+			return new SizeOfPluralAttributeExpression( this, (PluralAttributePath) mapExpression );
+		}
+		// TODO : what other specific types?  any?
+		throw new IllegalArgumentException("unknown collection expression type [" + mapExpression.getClass().getName() + "]" );
+	}
+
+	@Override
+	public <M extends Map<?, ?>> Expression<Integer> mapSize(M map) {
+		int size = map == null ? 0 : map.size();
+		return new LiteralExpression<>( this, Integer.class, size );
+	}
+
+	@SuppressWarnings("unchecked")
+	private <X, T, V extends T, K extends JoinImplementor> K treat(
+			Join<X, T> join,
+			Class<V> type,
+			BiFunction<Join<X, T>, Class<V>, K> f) {
+		final Set<Join<X, ?>> joins = join.getParent().getJoins();
+		final K treatAs = f.apply( join, type );
+		joins.add( treatAs );
+		return treatAs;
 	}
 }

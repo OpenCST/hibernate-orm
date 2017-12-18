@@ -10,10 +10,14 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Locale;
 
+import org.hibernate.dialect.function.NoArgSQLFunction;
+import org.hibernate.dialect.function.NvlFunction;
+import org.hibernate.dialect.function.SQLFunctionTemplate;
 import org.hibernate.dialect.function.VarArgsSQLFunction;
 import org.hibernate.dialect.identity.IdentityColumnSupport;
 import org.hibernate.dialect.identity.InformixIdentityColumnSupport;
 import org.hibernate.dialect.pagination.FirstLimitHandler;
+import org.hibernate.dialect.pagination.LegacyFirstLimitHandler;
 import org.hibernate.dialect.pagination.LimitHandler;
 import org.hibernate.dialect.unique.InformixUniqueDelegate;
 import org.hibernate.dialect.unique.UniqueDelegate;
@@ -72,7 +76,13 @@ public class InformixDialect extends Dialect {
 		registerColumnType( Types.VARCHAR, 32739, "lvarchar($l)" );
 
 		registerFunction( "concat", new VarArgsSQLFunction( StandardBasicTypes.STRING, "(", "||", ")" ) );
-		
+		registerFunction( "substring", new SQLFunctionTemplate(StandardBasicTypes.STRING, "substring(?1 FROM ?2 FOR ?3)"));
+		registerFunction( "substr", new SQLFunctionTemplate( StandardBasicTypes.STRING, "substr(?1, ?2, ?3)"));
+		registerFunction( "coalesce", new NvlFunction());
+		registerFunction( "nvl", new NvlFunction());
+		registerFunction( "current_timestamp", new NoArgSQLFunction( "current", StandardBasicTypes.TIMESTAMP, false ) );
+		registerFunction( "current_date", new NoArgSQLFunction( "today", StandardBasicTypes.DATE, false ) );
+
 		uniqueDelegate = new InformixUniqueDelegate( this );
 	}
 
@@ -169,6 +179,9 @@ public class InformixDialect extends Dialect {
 
 	@Override
 	public LimitHandler getLimitHandler() {
+		if ( isLegacyLimitHandlerBehaviorEnabled() ) {
+			return LegacyFirstLimitHandler.INSTANCE;
+		}
 		return FirstLimitHandler.INSTANCE;
 	}
 

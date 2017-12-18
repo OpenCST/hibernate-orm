@@ -27,7 +27,7 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
@@ -36,8 +36,6 @@ import static org.junit.Assert.assertNull;
  */
 @RequiresDialect(Oracle8iDialect.class)
 public class OracleCustomSQLWithStoredProcedureTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( OracleCustomSQLWithStoredProcedureTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {

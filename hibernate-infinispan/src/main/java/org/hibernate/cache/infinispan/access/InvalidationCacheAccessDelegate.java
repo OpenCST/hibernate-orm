@@ -71,7 +71,7 @@ public abstract class InvalidationCacheAccessDelegate implements AccessDelegate 
 	}
 
    /**
-    * Attempt to cache an object, afterQuery loading from the database, explicitly
+    * Attempt to cache an object, after loading from the database, explicitly
     * specifying the minimalPut behavior.
     *
 	 * @param session Current session
@@ -123,9 +123,6 @@ public abstract class InvalidationCacheAccessDelegate implements AccessDelegate 
 
 	@Override
 	public void remove(SharedSessionContractImplementor session, Object key) throws CacheException {
-		if ( !putValidator.beginInvalidatingKey(session, key)) {
-			throw log.failedInvalidatePendingPut(key, region.getName());
-		}
 		putValidator.setCurrentSession(session);
 		try {
 			// We update whether or not the region is valid. Other nodes
@@ -174,8 +171,5 @@ public abstract class InvalidationCacheAccessDelegate implements AccessDelegate 
 
 	@Override
 	public void unlockItem(SharedSessionContractImplementor session, Object key) throws CacheException {
-		if ( !putValidator.endInvalidatingKey(session, key) ) {
-			log.failedEndInvalidating(key, region.getName());
-		}
 	}
 }

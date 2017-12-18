@@ -20,15 +20,13 @@ import org.junit.Test;
 
 import org.jboss.logging.Logger;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 import static org.junit.Assert.assertTrue;
 
 /**
  * @author Vlad Mihalcea
  */
 public class AutoFlushTest extends BaseEntityManagerFunctionalTestCase {
-
-	private static final Logger log = Logger.getLogger( AutoFlushTest.class );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {
@@ -136,7 +134,7 @@ public class AutoFlushTest extends BaseEntityManagerFunctionalTestCase {
 			//session.setHibernateFlushMode( FlushMode.COMMIT );
 
 			assertTrue(((Number) session
-					.createSQLQuery( "select count(*) from Person")
+					.createNativeQuery( "select count(*) from Person")
 					.uniqueResult()).intValue() == 0 );
 			//end::flushing-auto-flush-sql-native-example[\]
 		} );
@@ -159,7 +157,7 @@ public class AutoFlushTest extends BaseEntityManagerFunctionalTestCase {
 			Session session = entityManager.unwrap( Session.class );
 
 			assertTrue(((Number) session
-					.createSQLQuery( "select count(*) from Person")
+					.createNativeQuery( "select count(*) from Person")
 					.addSynchronizedEntityClass( Person.class )
 					.uniqueResult()).intValue() == 1 );
 			//end::flushing-auto-flush-sql-synchronization-example[]

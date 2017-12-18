@@ -24,7 +24,7 @@ import org.hibernate.jpa.test.BaseEntityManagerFunctionalTestCase;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.hibernate.userguide.util.TransactionUtil.doInJPA;
+import static org.hibernate.testing.transaction.TransactionUtil.doInJPA;
 
 /**
  * @author Vlad Mihalcea
@@ -71,6 +71,7 @@ public class ElementCollectionMapTest extends BaseEntityManagerFunctionalTestCas
 
 		@Id
 		private Long id;
+
 		@Temporal(TemporalType.TIMESTAMP)
 		@ElementCollection
 		@CollectionTable(name = "phone_register")
@@ -78,8 +79,7 @@ public class ElementCollectionMapTest extends BaseEntityManagerFunctionalTestCas
 		@MapKeyJoinColumn(name = "phone_id", referencedColumnName = "id")
 		private Map<Phone, Date> phoneRegister = new HashMap<>();
 
-		public Person() {
-		}
+		public Person() {}
 
 		public Person(Long id) {
 			this.id = id;
