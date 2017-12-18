@@ -154,7 +154,7 @@ public class HSQLDialect extends Dialect {
 		}
 
 		//HSQL has no Blob/Clob support .... but just put these here for now!
-		if ( hsqldbVersion < 200 ) {
+		if ( hsqldbVersion >= 200 ) {
 			registerColumnType( Types.BLOB, "longvarbinary" );
 			registerColumnType( Types.CLOB, "longvarchar" );
 		}
